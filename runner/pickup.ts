@@ -2,8 +2,9 @@
  * Picks up the messages the app posts into the groups this runner owns.
  *
  * The app writes its messages into the room log it syncs to Hermes. Each pass reloads that log and
- * starts a turn for every user message the runner hasn't seen. The first pass only records what is
- * already there, so starting the runner never replays old messages.
+ * starts a turn for every user message the runner hasn't seen in a group it owns. Every pass records
+ * the user messages of every group, owned or not, so a group handed to the runner later starts from
+ * where it is and does not replay what was said while the app owned it.
  */
 import { refreshProfiles } from '../src/lib/store'
 import { $rooms, loadRooms, ownsTurns, pickUpMessage } from '../src/lib/rooms'
@@ -38,9 +39,7 @@ export async function pickUpNewMessages() {
   const seen = readSeen() ?? new Set<string>()
 
   for (const room of Object.values($rooms.get())) {
-    if (!ownsTurns(room)) {
-      continue
-    }
+    const owned = ownsTurns(room)
 
     for (const entry of room.log) {
       if (entry.from.kind !== 'user' || seen.has(entry.id)) {
@@ -49,7 +48,7 @@ export async function pickUpNewMessages() {
 
       seen.add(entry.id)
 
-      if (!baseline) {
+      if (owned && !baseline) {
         pickUpMessage(room.key, entry)
       }
     }
