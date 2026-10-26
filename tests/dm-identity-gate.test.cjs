@@ -16,6 +16,7 @@ const assert = require('node:assert/strict')
 const { test } = require('node:test')
 
 const MAIN = require('node:fs').readFileSync(require.resolve('../electron/main.cjs'), 'utf8')
+const TOOL_ROUTES = require('../electron/tool-routes.cjs')
 
 /** A whole top-level function from the real source, brace-matched so the slice is always complete. */
 const sliceFunction = (source, name, fallback = '') => {
@@ -55,16 +56,22 @@ const sliceFunction = (source, name, fallback = '') => {
  * calls `confirmMcpEntry`, and it stores its verdict in `groupsReadyBy`. All four are extracted
  * together because that call chain IS the behaviour under test.
  */
-const loadGate = () => {
+const loadGate = (settings = {}) => {
   const body = [
     'const groupsReadyBy = new Map()',
     'const thisPcAsks = new Map()',
-    'const localComputer = { SERVER_NAME: PC_SERVER, groupToken: name => groupTokens[name] || "" }',
+    'const localComputer = { SERVER_NAME: PC_SERVER, groupToken: name => groupTokens[name] || "", appToken: name => `app:${name}` }',
+    'const { registrationsFor } = TOOL_ROUTES',
+    // The app's settings file is not part of this test; no runner is configured, as on a fresh install.
+    `const readSettings = () => (${JSON.stringify(settings)})`,
     // A source predating this fix has no `confirmMcpEntry` and no `groupsReady`; the stand-ins below
     // reproduce the old behaviour so the tests fail on their assertions rather than on a loader error.
     sliceFunction(MAIN, 'confirmMcpEntry', 'async function confirmMcpEntry() { return { ok: true } }'),
     sliceFunction(MAIN, 'markThisPcUntrusted', 'async function markThisPcUntrusted() { return true }'),
     sliceFunction(MAIN, 'registerMcp'),
+    sliceFunction(MAIN, 'unregisterMcp', 'async function unregisterMcp() {}'),
+    sliceFunction(MAIN, 'runnerGroupsUrl', 'function runnerGroupsUrl() { return "" }'),
+    sliceFunction(MAIN, 'registerGroupTools'),
     sliceFunction(MAIN, 'registerThisPc'),
     sliceFunction(MAIN, 'groupsReady', 'function groupsReady() { return true }'),
     'return { registerThisPc, groupsReady, groupsReadyBy }'
@@ -76,6 +83,7 @@ const loadGate = () => {
     'dbg',
     'PC_SERVER',
     'groupTokens',
+    'TOOL_ROUTES',
     `${body}`
   )
 }
@@ -89,7 +97,7 @@ const link = { baseUrl: 'http://127.0.0.1:9999/', hermesToken: 'root', mcpUrl: '
  * profile's entry actually points at. `register` decides what a POST does, which is how a clone
  * that keeps the inherited pair is modelled — the POST is accepted but nothing changes.
  */
-function hermesFixture(behaviour = {}) {
+function hermesFixture(behaviour = {}, settings = {}) {
   const seen = { listed: [], posted: [], tested: [] }
   // Per-profile config. `default` starts correct; x-manager starts holding default's pair, which is
   // the shape `profile_cmd --clone` produces.
@@ -161,7 +169,7 @@ function hermesFixture(behaviour = {}) {
     return new Response('{}', { status: 404 })
   }
 
-  const gate = loadGate()(fetchImpl, () => undefined, PC_SERVER, { default: 'bearer-default', 'x-manager': 'bearer-x' })
+  const gate = loadGate(settings)(fetchImpl, () => undefined, PC_SERVER, { default: 'bearer-default', 'x-manager': 'bearer-x' }, TOOL_ROUTES)
 
   return { ...gate, seen, config, link }
 }
@@ -184,6 +192,16 @@ test('control: two profiles registering in turn each end up ready', async () => 
 
   assert.equal(f.groupsReady('default'), true)
   assert.equal(f.groupsReady('x-manager'), true)
+})
+
+test('with a runner configured, conversations go to the runner and the app tools stay on this PC', async () => {
+  const f = hermesFixture({}, { runnerGroupsUrl: 'http://127.0.0.1:40377' })
+
+  await f.registerThisPc(f.link, 'x-manager', 'x-manager')
+
+  assert.equal(f.groupsReady('x-manager'), true, 'the runner entry must be confirmed before the first turn')
+  assert.equal(f.config['x-manager'][GROUP_SERVER].url, 'http://127.0.0.1:40377/groups/x-manager')
+  assert.equal(f.config['x-manager']['hermes-bots-app'].url, 'http://127.0.0.1:9999/app/x-manager')
 })
 
 // ── A -> B -> A, each profile confirmed against its own entry ───────────────
@@ -356,7 +374,8 @@ test('nothing logged or returned carries a bearer', async () => {
     async () => new Response('{"servers":[]}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     (...parts) => lines.push(parts.map(String).join(' ')),
     PC_SERVER,
-    { default: 'bearer-default', 'x-manager': 'bearer-x' }
+    { default: 'bearer-default', 'x-manager': 'bearer-x' },
+    TOOL_ROUTES
   )
 
   await gate.registerThisPc(link, 'x-manager', 'x-manager')
