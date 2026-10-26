@@ -162,6 +162,8 @@ export interface ChatMsg {
   from?: string
   tools?: ToolCall[]
   streaming?: boolean
+  /** Text the bot sent before a tool call: progress, not the final answer. */
+  interim?: boolean
   /** The reply was cut off (Stop, or Hermes restarted mid-stream): the partial text is kept and marked. */
   stopped?: boolean
   attachments?: MsgAttachment[]
@@ -203,6 +205,15 @@ export interface ChatMsg {
 export interface RoomMember {
   name: string
   handle?: string
+}
+
+/** Something a bot worked out loud in a group: progress before its answer, kept out of the group's log. */
+export interface WorkItem {
+  id: string
+  roomId: string
+  member: string
+  at: number
+  text: string
 }
 
 export interface RoomEntry {

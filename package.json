@@ -16,7 +16,7 @@
     "start": "bun build.ts && electron app",
     "check": "node -e \"for (const f of require('fs').readdirSync('electron').filter(f => f.endsWith('.cjs'))) require('child_process').execFileSync(process.execPath, ['--check', 'electron/' + f], { stdio: 'inherit' })\"",
     "test": "node --test tests/*.test.cjs && npm run test:rooms && npm run test:ui && npm run test:runner",
-    "test:rooms": "npx --yes bun@1.4.2 test tests/rooms-wake.test.ts tests/rooms-cm1.test.ts tests/room-typing-ui.test.ts tests/room-typing-stream.test.ts tests/rooms-live-corrections.test.ts",
+    "test:rooms": "npx --yes bun@1.4.2 test tests/rooms-wake.test.ts tests/rooms-cm1.test.ts tests/room-typing-ui.test.ts tests/room-typing-stream.test.ts tests/rooms-live-corrections.test.ts tests/room-work.test.ts",
     "test:ui": "npx --yes bun@1.4.2 test tests/reply-ui.test.ts tests/roster-working-label.test.ts",
     "test:runner": "npx --yes bun@1.4.2 test tests/runner-host.test.ts tests/runner-pickup.test.ts tests/runner-groups.test.ts",
     "runner": "bun runner/main.ts",

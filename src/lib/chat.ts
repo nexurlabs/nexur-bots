@@ -418,7 +418,9 @@ export function applyEvent(messages: ChatMsg[], event: GatewayEvent, from?: stri
         msg.text = msg.text ? `${msg.text}\n\n${payload.text}` : String(payload.text)
       }
 
+      // Text sent before a tool call is working out loud, not the answer: the group keeps it in Work.
       msg.streaming = false
+      msg.interim = true
       list.push({ id: newId('s'), role: 'assistant', text: '', at: Date.now(), tools: [], streaming: true, from })
       break
     }

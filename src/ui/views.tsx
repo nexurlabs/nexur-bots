@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react'
+import { atom } from 'nanostores'
 import { useEffect, useState } from 'react'
 
 import { $approvals, approvalsFor } from '../lib/approvals'
@@ -15,10 +16,10 @@ import { userReact } from '../lib/react-actions'
 import { $chatReactions, loadChatReactions, withChatReactions } from '../lib/reactions'
 import { $jobs, stopJob, syncJobs, type Job } from '../lib/background'
 import { $chats, $outbox, chatShowsHistory, loadBotChat, outboxMessages, runtimeFor, sendToBot, stopBot } from '../lib/chat'
-import { $roomRunning, $rooms, $roomTyping, postToRoom, releaseHold, roomBots, stopRoom, type RoomTypingTurn } from '../lib/rooms'
+import { $roomRunning, $rooms, $roomTyping, $roomWork, postToRoom, releaseHold, roomBots, stopRoom, type RoomTypingTurn } from '../lib/rooms'
 import { $selfEditNotes, type SelfEditNote } from '../lib/self-edit'
 import { $allBots, $bots, $lead, $panelOpen, $selection } from '../lib/store'
-import type { Bot, ChatMsg, Room } from '../lib/types'
+import type { Bot, ChatMsg, Room, WorkItem } from '../lib/types'
 import { Avatar, AvatarStack } from './avatar'
 import { $dialog } from './dialogs'
 import { Icon } from './icons'
@@ -354,6 +355,89 @@ function BackgroundJobs({ bot, session }: { bot: string; session: string | null 
   )
 }
 
+/** The group whose Work pane is open, by room key. */
+const $workRoom = atom<string | null>(null)
+
+/** The Work button in a group's header: opens what the bots worked out loud before their answers. */
+function WorkButton({ room }: { room: Room }) {
+  const count = useStore($roomWork).filter(item => item.roomId === room.roomId).length
+  const open = useStore($workRoom) === room.key
+
+  return (
+    <button
+      aria-pressed={open}
+      className="chip"
+      onClick={() => {
+        if (!open) $openThread.set(null)
+        $workRoom.set(open ? null : room.key)
+      }}
+      title="What the bots worked out before their answers"
+      type="button"
+    >
+      Work{count ? ` (${count})` : ''}
+    </button>
+  )
+}
+
+/** The Work pane: what each bot worked out loud in this group, per bot, newest first. Not the chat. */
+function WorkPane({ room }: { room: Room }) {
+  const work = useStore($roomWork).filter(item => item.roomId === room.roomId)
+  const typing = useStore($roomTyping)[room.key] || {}
+  const allBots = useStore($allBots)
+  const close = () => $workRoom.set(null)
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && !event.defaultPrevented && $workRoom.set(null)
+
+    window.addEventListener('keydown', onKey)
+
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const byBot = new Map<string, WorkItem[]>()
+
+  for (const item of work) {
+    byBot.set(item.member, [...(byBot.get(item.member) || []), item])
+  }
+
+  return (
+    <aside className="thread-pane work-pane" aria-label="Work">
+      <header className="thread-pane-head">
+        <Icon name="thread" size={16} />
+        <b>Work</b>
+        <span className="thread-pane-sub">{room.name}</span>
+        <button aria-label="Close work" className="icon-btn xs ghost" onClick={close} title="Close (Esc)" type="button">
+          <Icon name="close" size={14} />
+        </button>
+      </header>
+      {byBot.size === 0 ? <p className="work-empty">Nothing worked out loud yet. Progress from the bots shows here; their answers go to the chat.</p> : null}
+      {[...byBot.entries()].map(([member, items]) => {
+        const bot = allBots.find(candidate => candidate.name === member)
+
+        return (
+          <section className="work-bot" key={member}>
+            <h4>
+              {bot?.display || member}
+              {typing[member] ? <small> · working now</small> : null}
+            </h4>
+            <ul>
+              {items
+                .slice()
+                .reverse()
+                .map(item => (
+                  <li key={item.id}>
+                    <time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+                    <span>{item.text}</span>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        )
+      })}
+    </aside>
+  )
+}
+
 function roomMessages(room: Room, typing: RoomTypingTurn[]): ChatMsg[] {
   const base: ChatMsg[] = room.log.map(entry => ({
     id: entry.id,
@@ -371,13 +455,16 @@ function roomMessages(room: Room, typing: RoomTypingTurn[]): ChatMsg[] {
     ...(entry.threadOf ? { thread: entry.threadOf } : {})
   }))
 
-  const live = typing.flatMap(turn => {
-    const messages = turn.messages.length
-      ? turn.messages
-      : [{ id: `typing:${turn.member}`, role: 'assistant' as const, text: '', at: 0, from: turn.member, streaming: true }]
-
-    return messages.map(msg => ({ ...msg, from: turn.member, ...(turn.thread ? { thread: turn.thread } : {}) }))
-  })
+  // A bot still working shows as a typing line only. What it writes while it works is in Work.
+  const live = typing.map(turn => ({
+    id: `typing:${turn.member}`,
+    role: 'assistant' as const,
+    text: '',
+    at: 0,
+    from: turn.member,
+    streaming: true,
+    ...(turn.thread ? { thread: turn.thread } : {})
+  }))
 
   return [...base, ...live]
 }
@@ -392,6 +479,7 @@ export function RoomView({ room }: { room: Room }) {
   const members = roomBots(room)
   const leadHere = members.find(bot => bot.lead) || null
   const openThread = useStore($openThread)
+  const workOpen = useStore($workRoom) === room.key
   const ids = new Set(room.log.map(entry => entry.id))
   const split = splitThreads(roomMessages(room, typing), msg => (ids.has(msg.id) ? msg.id : undefined))
   const roomNotes = useStore($switchNotes)[`room:${room.roomId}`] || []
@@ -411,7 +499,12 @@ export function RoomView({ room }: { room: Room }) {
   return (
     <section className="center" data-thread={threadRoot ? '' : undefined}>
       <TopBar
-        extra={members.length ? <RoomModels members={members} roomId={room.roomId} /> : null}
+        extra={
+          <>
+            {members.length ? <RoomModels members={members} roomId={room.roomId} /> : null}
+            <WorkButton room={room} />
+          </>
+        }
         onTitle={() => $panelOpen.set(!$panelOpen.get())}
         title={
           <>
@@ -453,6 +546,7 @@ export function RoomView({ room }: { room: Room }) {
         messages={messages}
         scope={`room:${room.roomId}`}
       />
+      {workOpen && !threadRoot ? <WorkPane room={room} /> : null}
       <HoldBanner members={members} room={room} />
       <Composer
         mentionables={members}

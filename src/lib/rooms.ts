@@ -16,9 +16,9 @@ import { botOffline, hostOf, machineLabel } from './hosts'
 import { addSwitchNote } from './session-model'
 import { noteTurnEnd } from './memory'
 import { $allBots, $busy, $profiles, $userName, claimBusy, clearTurnStatus, recordTurnStatus, refreshProfiles, releaseBusy } from './store'
-import { directoryInput, setRoomsSource, teamContext } from './team'
+import { directoryInput, GROUP_POST_TOOL, setRoomsSource, teamContext } from './team'
 import { roomRef, takeNotes } from './reactions'
-import type { AskCard, Bot, BotFile, HelpCard, SecretCard, ChatMsg, Room, RoomEntry, RoomMember, RoomSettings } from './types'
+import type { AskCard, Bot, BotFile, HelpCard, SecretCard, ChatMsg, Room, RoomEntry, RoomMember, RoomSettings, WorkItem } from './types'
 
 const SYNC_KEY = 'hermes-bots-groups'
 const SYNC_MAX_BYTES = 46_000
@@ -27,6 +27,11 @@ const SYNC_TEXT = 1200
 const PASS = /^\s*[(\[]?\s*pass\s*[)\]]?\.?\s*$/i
 /** Members a room syncs. The envelope's byte cap still bounds the total. */
 const SYNC_MEMBERS = 24
+// Work notes sync under their own key, so progress never crowds the group's 16 messages.
+const WORK_KEY = 'hermes-bots-work'
+const WORK_MAX_BYTES = 24_000
+const WORK_PER_ROOM = 40
+const WORK_TEXT = 400
 /** A member's turn ends if Hermes sends nothing at all for this long (a dropped socket, a wedged run). */
 const TURN_IDLE_MS = 5 * 60_000
 // The clock the scheduler actually arms. A module-level seam so a test can shorten it; production
@@ -61,6 +66,8 @@ function safeRecord<T>(source?: Record<string, T>): Record<string, T> {
 
 export const $roomTyping = atom<Record<string, Record<string, RoomTypingTurn>>>(safeRecord())
 export const $roomRunning = atom<Record<string, boolean>>({})
+/** Work notes from every group, oldest first. The Work pane shows them per bot. */
+export const $roomWork = atom<WorkItem[]>([])
 
 /** Which process runs group turns: this app, or the VM runner (runner/host.ts). A group's turns run
  * only in the process that owns it, so the app and the runner never both answer the same message. */
@@ -191,6 +198,8 @@ export function loadRooms(force = false) {
   if (!force && (saveTimer || saving)) {
     return
   }
+
+  loadWork(force)
 
   const row = defaultRow()
 
@@ -376,6 +385,163 @@ export async function saveRooms() {
     )
 
     return
+  }
+}
+
+// ── work notes: what a bot worked out loud before its answer, kept out of the group log ──
+/** Newest first within the per-group and byte limits; returned oldest first. */
+function boundedWork(items: WorkItem[]): WorkItem[] {
+  const perRoom = new Map<string, number>()
+  const kept: WorkItem[] = []
+  let bytes = 0
+
+  // Newest first; notes written in the same millisecond keep the order they were written in.
+  const newestFirst = items.map((item, index) => ({ item, index })).sort((a, b) => b.item.at - a.item.at || b.index - a.index)
+
+  for (const { item } of newestFirst) {
+    const count = perRoom.get(item.roomId) || 0
+    const size = JSON.stringify(item).length
+
+    if (count >= WORK_PER_ROOM || bytes + size > WORK_MAX_BYTES) {
+      continue
+    }
+
+    perRoom.set(item.roomId, count + 1)
+    bytes += size
+    kept.push(item)
+  }
+
+  return kept.reverse()
+}
+
+function workEnvelope(items: WorkItem[]) {
+  return {
+    version: 1,
+    updatedAt: Date.now(),
+    items: items.map(item => ({ id: item.id, roomId: item.roomId, member: item.member, at: item.at, text: item.text }))
+  }
+}
+
+function cleanWorkItem(raw: unknown): WorkItem | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const item = raw as Record<string, unknown>
+
+  if (typeof item.id !== 'string' || typeof item.roomId !== 'string' || typeof item.member !== 'string' || typeof item.at !== 'number' || typeof item.text !== 'string') {
+    return null
+  }
+
+  return { id: item.id.slice(0, 64), roomId: item.roomId.slice(0, 64), member: item.member.slice(0, 128), at: item.at, text: item.text.slice(0, WORK_TEXT) }
+}
+
+/** A bot worked something out loud in a group: keep it in Work. Teammates it names are woken by the caller. */
+function recordWork(key: string, member: string, text: string) {
+  const room = $rooms.get()[key]
+  const body = text.trim().slice(0, WORK_TEXT)
+
+  if (!room || !body) {
+    return
+  }
+
+  $roomWork.set(boundedWork([...$roomWork.get(), { id: newId('w'), roomId: room.roomId, member, at: Date.now(), text: body }]))
+  scheduleWorkSave()
+}
+
+/** Work notes that name this bot and were written since its last turn in the group. */
+function workNotesFor(roomId: string, bot: Bot, since: number) {
+  return $roomWork
+    .get()
+    .filter(item => item.roomId === roomId && item.member !== bot.name && item.at > since && mentionedIn(ownWords(item.text), [bot]).length > 0)
+    .slice(-5)
+}
+
+let workTimer: null | ReturnType<typeof setTimeout> = null
+let workSaving = false
+
+function scheduleWorkSave() {
+  if (workTimer) {
+    clearTimeout(workTimer)
+  }
+
+  workTimer = setTimeout(() => {
+    workTimer = null
+    workSaving = true
+    void saveWork()
+      .catch(error => console.warn('work sync failed', error))
+      .finally(() => {
+        workSaving = false
+      })
+  }, 1200)
+}
+
+export async function saveWork() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const row = defaultRow()
+
+    if (!row) {
+      return
+    }
+
+    const envelope = workEnvelope(boundedWork($roomWork.get()))
+    const revision = row.ui_meta_revisions?.[WORK_KEY]
+    const result = await gateway.request<any>('profiles.configure', {
+      name: row.name,
+      profile: row.name,
+      ui_meta: { [WORK_KEY]: envelope },
+      ...(typeof revision === 'number' ? { ui_meta_expected_revisions: { [WORK_KEY]: revision } } : {})
+    })
+
+    if (result?.applied?.ui_meta_conflicts && Object.keys(result.applied.ui_meta_conflicts).length) {
+      // Another writer saved work first: take theirs in, keep ours, and try again.
+      await refreshProfiles()
+      loadWork(true)
+      continue
+    }
+
+    const revisions = result?.applied?.ui_meta_revisions || {}
+    $profiles.set(
+      $profiles.get().map(entry =>
+        entry.name === row.name
+          ? {
+              ...entry,
+              ui_meta: { ...(entry.ui_meta || {}), [WORK_KEY]: envelope },
+              ui_meta_revisions: { ...(entry.ui_meta_revisions || {}), ...revisions }
+            }
+          : entry
+      )
+    )
+
+    return
+  }
+}
+
+/** Takes the synced work notes in, keeping any this device has not synced yet. */
+function loadWork(force = false) {
+  if (!force && (workTimer || workSaving)) {
+    return
+  }
+
+  const raw = defaultRow()?.ui_meta?.[WORK_KEY] as { items?: unknown } | undefined
+
+  if (!raw || !Array.isArray(raw.items)) {
+    return
+  }
+
+  const merged = new Map<string, WorkItem>()
+
+  for (const item of [...raw.items.map(cleanWorkItem), ...$roomWork.get()]) {
+    if (item) {
+      merged.set(item.id, item)
+    }
+  }
+
+  const next = boundedWork([...merged.values()])
+
+  // Same notes as before: leave the store alone so the panes don't re-render on every pass.
+  if (JSON.stringify(next) !== JSON.stringify($roomWork.get())) {
+    $roomWork.set(next)
   }
 }
 
@@ -685,7 +851,7 @@ const WHY_LINE: Record<Why, string> = {
   room: "Nobody was addressed by name. Speak only if you can add something the others haven't already covered. If another member already answered it, or it isn't for you, reply exactly: (pass)"
 }
 
-function buildPrompt(room: Room, bot: Bot, fresh: RoomEntry[], why: Why, marks: Record<string, string[]> = {}, session = ''): string {
+function buildPrompt(room: Room, bot: Bot, fresh: RoomEntry[], why: Why, marks: Record<string, string[]> = {}, session = '', notes: WorkItem[] = []): string {
   const members = roomBots(room)
     .map(member => `${member.display} (@${member.handle}${member.lead ? ', Lead' : ''})`)
     .join(', ')
@@ -709,9 +875,14 @@ function buildPrompt(room: Room, bot: Bot, fresh: RoomEntry[], why: Why, marks: 
     'You share this room with the others and see everything said in it, but not anyone\'s private 1:1 chats. Reply with your message to the group only — no speaker prefix. Keep it conversational.',
     'This is a group chat, not a first meeting: never offer onboarding, a profile of the user, or /help tips here.',
     'Only speak when you add something new: an answer, a fact, a decision, or work you did. Don\'t repeat, agree with, or sum up what someone already said. @mention a teammate only when you want them to act next. If you have nothing to add, reply exactly: (pass)',
+    // What you write while working is progress: it lands in the group's Work section, not the chat. Your reply is the answer.
+    directoryInput(bot.name, 'group').appTools
+      ? `If an intermediate step has to reach the group right now (a decision, a blocker, a question someone must answer), post it with ${GROUP_POST_TOOL} to the group "${room.name}". Otherwise, keep your working notes out of the chat: they go to Work on their own.`
+      : 'Keep your working notes out of the chat: what you write while working goes to the group\'s Work section on its own. Your reply is the answer.',
     '\u0000',
     'New messages since your last turn:',
     lines || '(none)',
+    notes.length ? `\nWork from teammates that names you (their progress, not group messages):\n${notes.map(note => `${note.member}: ${note.text}`).join('\n')}` : '',
     fresh.length && fresh[fresh.length - 1].threadOf
       ? `\nThe last message is a reply in the thread on ${roomRef(fresh[fresh.length - 1].threadOf as string)}; your reply goes into that thread.`
       : '',
@@ -725,6 +896,8 @@ function buildPrompt(room: Room, bot: Bot, fresh: RoomEntry[], why: Why, marks: 
 // ── running a round ───────────────────────────────────────────────────────
 /** `<room key>|<member>` → the thread root the member is answering in this turn. */
 const turnThread = new Map<string, string>()
+/** `<room key>|<member>` → when the member's last turn in the room started: the Work notes after it are new to it. */
+const workSince = new Map<string, number>()
 
 /** The root to file an entry under: a reply's root, or the entry itself. */
 export const rootOfEntry = (entry: RoomEntry) => entry.threadOf || entry.id
@@ -779,29 +952,6 @@ function rankOf(bots: Bot[], name: string) {
   const at = bots.findIndex(item => item.name === name)
 
   return at < 0 ? 999 : at
-}
-
-/**
- * Is this fragment safe to publish to the room log yet?
- *
- * A turn used to publish the moment any text appeared, so the first streamed token — "the", "I",
- * "Let" — became a permanent message and `publishedId` latched, which meant the rest of the answer
- * could never be posted. Half a sentence is not an answer.
- *
- * Publication still has to happen early: releasing the speak slot is what lets the next member
- * start while this one is still working. So the gate is not "does it look like pass" (a hardcoded
- * prefix list could never be right) but "is this a finished piece of writing" — a sentence
- * boundary or a whole line. Anything shorter stays in the typing slot, which is what it is for,
- * and posts once at the turn's end if it never grows into one.
- */
-function publishableFragment(text: string) {
-  const t = text.trim()
-
-  if (!t || pendingPass(t)) {
-    return false
-  }
-
-  return /[.!?…]["')\]]*\s*$/.test(t) || /\n/.test(t)
 }
 
 /** A `(pass)` is a control token, not a reply — never worth publishing, fragment or not. */
@@ -1541,12 +1691,17 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
   const otherLive = Object.values($roomTyping.get()[key] || {}).filter(turn => turn.member !== member)
 
   for (const live of otherLive) {
-    const liveText = replyText(live.messages, '')
+    const liveText = replyText(live.messages.filter(msg => !msg.interim), '')
 
     if (liveText && !pendingPass(liveText) && !fresh.some(entry => entry.from.kind === 'member' && entry.from.name === live.member && entry.text === liveText)) {
       fresh.push({ id: `live:${live.member}`, at: Date.now(), from: { kind: 'member', name: live.member }, text: liveText })
     }
   }
+
+  // Teammates' Work notes that name this bot since its last turn here: the ask lives there, not in the log.
+  const workKey = turnKey(key, member)
+  const workNotes = workNotesFor(room.roomId, bot, workSince.get(workKey) || 0)
+  workSince.set(workKey, Date.now())
 
   const promptAnchor = room.log[room.log.length - 1]?.id || ''
   const sessionKey = `room:${room.roomId}:${member}`
@@ -1559,7 +1714,8 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
 
   const threaded = inThread ? { threadOf: inThread } : {}
   const handedOff = new Set<string>()
-  let publishedId = ''
+  // Work notes this turn has already kept, by message id.
+  const workKept = new Set<string>()
   activeTurns.add(turnKey(key, member))
   const owner: TurnOwner = { cancelled: false, dispose: () => undefined }
   turnOwners.set(turnKey(key, member), owner)
@@ -1590,6 +1746,20 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
           void drain(key)
         }
       })
+    }
+  }
+
+  // Text a bot sent before a tool call is progress: it goes to Work as soon as it is finished, and any
+  // teammate it names is woken now, the same as an answer would wake them.
+  const keepWork = (list: ChatMsg[]) => {
+    for (const msg of list) {
+      if (msg.role !== 'assistant' || !msg.interim || workKept.has(msg.id) || !msg.text.trim() || PASS.test(msg.text)) {
+        continue
+      }
+
+      workKept.add(msg.id)
+      recordWork(key, member, msg.text)
+      handoffNew(msg.text)
     }
   }
 
@@ -1659,18 +1829,7 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
         arm()
         messages = applyEvent(messages, event, member)
         setTyping(key, member, messages)
-        const shown = replyText(messages, bot.display)
-
-        if (shown && publishableFragment(shown) && !publishedId) {
-          const latest = $rooms.get()[key]
-
-          if (latest) {
-            publishedId = newId('g')
-            putRoom({ ...latest, log: [...latest.log, { id: publishedId, at: Date.now(), from: { kind: 'member', name: member }, text: shown, ...threaded }] })
-            handoffNew(shown)
-            releaseSpeak(key, member)
-          }
-        }
+        keepWork(messages)
 
         if (isTurnEnd(event)) {
           noteTurnEnd(member)
@@ -1750,7 +1909,7 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
 
     try {
       if (owner.cancelled || !$rooms.get()[key]) return null
-      await gateway.request('prompt.submit', { session_id: runtime, profile: member, text: buildPrompt(room, bot, fresh, why, marks, runtime as string) }, 120_000)
+      await gateway.request('prompt.submit', { session_id: runtime, profile: member, text: buildPrompt(room, bot, fresh, why, marks, runtime as string, workNotes) }, 120_000)
     } catch (error) {
       settle()
       throw error
@@ -1764,24 +1923,11 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
       return null
     }
 
+    keepWork(messages)
     const errors = messages.filter(msg => msg.role === 'error')
-    const text = replyText(messages, bot.display)
+    // The group gets the answer. Text Hermes marked interim (sent before a tool call) was progress, and it is in Work.
+    const text = replyText(messages.filter(msg => !msg.interim), bot.display)
     noteOutcome(key, member, errors.length > 0)
-
-    if (publishedId) {
-      const current = $rooms.get()[key]
-
-      if (current) {
-        putRoom({
-          ...current,
-          log: current.log.map(entry => (entry.id === publishedId ? { ...entry, text: text || entry.text } : entry))
-        })
-      }
-
-      handoffNew(text)
-      rememberSeen()
-      return text || null
-    }
 
     if (errors.length && !text) {
       const entry: RoomEntry = { id: newId('g'), at: Date.now(), from: { kind: 'member', name: member }, text: `⚠️ ${errors[0].text}`, ...threaded }
@@ -1797,7 +1943,6 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
     }
 
     const entry: RoomEntry = { id: newId('g'), at: Date.now(), from: { kind: 'member', name: member }, text, ...threaded }
-    publishedId = entry.id
     putRoom({ ...latest, log: [...latest.log, entry] })
     handoffNew(text)
     rememberSeen()
@@ -1808,7 +1953,7 @@ async function runMember(key: string, member: string, why: Why): Promise<null | 
 
     if (!owner.cancelled) noteOutcome(key, member, true)
 
-    if (latest && !publishedId && !owner.cancelled) {
+    if (latest && !owner.cancelled) {
       putRoom(
         {
           ...latest,
