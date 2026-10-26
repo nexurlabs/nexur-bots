@@ -263,17 +263,20 @@ describe('per-member typing renders every live stream', () => {
     const getHtml = () => renderToStaticMarkup(createElement(RoomView, { room: rooms.$rooms.get()[room.key] }))
     let html = getHtml()
 
-    expect((html.match(/data-streaming="true"/g) || []).length).toBe(2)
-    expect(html).toContain('alpha writing something long')
-    expect(html).toContain('beta writing at the same time')
+    // Each working bot shows as a typing bubble. What it is writing stays out of the chat until its answer.
+    expect((html.match(/class="bubble typing"/g) || []).length).toBe(2)
+    expect(html).not.toContain('alpha writing something long')
+    expect(html).not.toContain('beta writing at the same time')
 
     await complete(room.roomId, 'alpha', 'alpha finished')
     live = typing(room.key)
     html = getHtml()
 
     expect(Object.keys(live)).toEqual(['beta'])
-    expect((html.match(/data-streaming="true"/g) || []).length).toBe(1)
-    expect(html).toContain('beta writing at the same time')
+    expect((html.match(/class="bubble typing"/g) || []).length).toBe(1)
+    // Alpha's answer is posted to the chat; beta's text is still only in its typing bubble.
+    expect(html).toContain('alpha writing something long')
+    expect(html).not.toContain('beta writing at the same time')
 
     expect(rooms.roomInTurn('constructor')).toBeNull()
     expect(rooms.roomInTurn('toString')).toBeNull()
@@ -301,7 +304,7 @@ describe('per-member typing renders every live stream', () => {
     expect(live['__proto__'].messages.map((message: any) => message.text).join('')).toContain('proto-named bot is typing')
     expect(Object.prototype.hasOwnProperty.call(store.$busy.get(), '__proto__')).toBe(true)
     expect(store.$busy.get()['__proto__']).toBe(true)
-    expect((html.match(/data-streaming="true"/g) || []).length).toBe(1)
-    expect(html).toContain('proto-named bot is typing')
+    expect((html.match(/class="bubble typing"/g) || []).length).toBe(1)
+    expect(html).not.toContain('proto-named bot is typing')
   })
 })

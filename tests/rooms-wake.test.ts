@@ -482,7 +482,7 @@ describe('only a finished reply is published', () => {
     expect(log(room.key)).toEqual(['@alpha go'])
   })
 
-  test('the same token followed by a full sentence publishes the sentence, not the token', async () => {
+  test('a completed sentence waits for the turn to end, then posts once as the answer', async () => {
     const room = await startTurn()
 
     delta(room, 'alpha', 'the')
@@ -490,9 +490,13 @@ describe('only a finished reply is published', () => {
     delta(room, 'alpha', ' quick brown fox jumps over the lazy dog.')
     await flush()
 
+    // Nothing is posted while the turn runs: the answer is the finished turn, not a sentence on the way.
+    expect(log(room.key)).toEqual(['@alpha go'])
+
+    await complete(room.roomId, 'alpha', 'the quick brown fox jumps over the lazy dog.')
+
     const published = log(room.key)
 
-    // The fragment was never posted on its own; the completed sentence is.
     expect(published).toHaveLength(2)
     expect(published[1]).toBe('the quick brown fox jumps over the lazy dog.')
   })

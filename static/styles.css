@@ -1252,6 +1252,15 @@ input[type='time'].input, input[type='datetime-local'].input { color-scheme: dar
 .thread-pane .thread-inner { padding-top: 14px; max-width: none; }
 .thread-pane .composer-wrap { max-width: none; }
 .thread-pane .thread-inner > .msg:first-child { padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid #1f1f1f; }
+.work-pane { overflow-y: auto; padding: 6px 18px 18px; }
+.work-pane .work-empty { color: var(--faint); font-size: 13px; line-height: 1.5; margin: 14px 0; }
+.work-bot { padding: 12px 0; border-bottom: 1px solid #1f1f1f; }
+.work-bot h4 { margin: 0 0 6px; font-size: 13px; }
+.work-bot h4 small { color: var(--faint); font-weight: 400; }
+.work-bot ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.work-bot li { display: flex; gap: 10px; font-size: 13px; line-height: 1.5; color: var(--muted, #bdbdbd); }
+.work-bot time { flex: none; color: var(--faint); font-size: 11.5px; padding-top: 2px; }
+.work-bot li span { white-space: pre-wrap; overflow-wrap: anywhere; }
 .center[data-thread] > .center-top { right: min(440px, 52%); }
 
 /* Search palette */
