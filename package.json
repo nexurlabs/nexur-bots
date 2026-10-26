@@ -1,7 +1,7 @@
 {
   "name": "hermes-bots",
   "productName": "NexurBots",
-  "version": "1.8.10",
+  "version": "1.8.11",
   "description": "A desktop app for chatting with a team of bots — one per Hermes Agent profile — in 1:1 chats and group chats.",
   "author": {
     "name": "NexurLabs",
