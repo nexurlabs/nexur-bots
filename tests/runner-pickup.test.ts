@@ -130,6 +130,41 @@ test('a message is picked up once, not again on the next pass', async () => {
   }
 })
 
+test('a group handed to the runner later does not replay what was said before', async () => {
+  const { startHost } = await import('../runner/host')
+  const { pickUpNewMessages } = await import('../runner/pickup')
+  const rooms = await import('../src/lib/rooms')
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
+
+  try {
+    const room = rooms.createRoom('Handed over', ['alpha'], { reply: 'everyone' })
+
+    // While the app owns the group, the message is the app's; the runner's passes see it and move on.
+    rooms.setConductor('runner')
+    rooms.postToRoom(room.key, '@alpha said before the hand-over')
+    await pickUpNewMessages()
+    await settle()
+    expect(submittedTo('alpha')).toHaveLength(0)
+
+    // Handing the group over must not start a turn for that old message.
+    rooms.setRoomSettings(room.key, { reply: 'everyone', runner: true })
+    await pickUpNewMessages()
+    await settle()
+    expect(submittedTo('alpha')).toHaveLength(0)
+
+    // A message posted after the hand-over is answered once, by the runner.
+    rooms.setConductor('app')
+    rooms.postToRoom(room.key, '@alpha after the hand-over')
+    rooms.setConductor('runner')
+    await pickUpNewMessages()
+    await waitFor(() => submittedTo('alpha').length === 1, 'the runner to answer the new message')
+    await settle()
+    expect(submittedTo('alpha')).toHaveLength(1)
+  } finally {
+    host.close()
+  }
+})
+
 test('the runner leaves a group the app owns alone', async () => {
   const { startHost } = await import('../runner/host')
   const { pickUpNewMessages } = await import('../runner/pickup')
