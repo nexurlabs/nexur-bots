@@ -94,7 +94,7 @@ async function rpc(port: number, profile: string, token: string, body: unknown) 
 test('the bots reach their own group tools with their own token, and nothing else', async () => {
   const { startHost } = await import('../runner/host')
   const { startGroupsServer, groupToken, loadOrCreateSecret } = await import('../runner/groups-server')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
   const server = await startGroupsServer({ secret: SECRET })
 
   try {
@@ -122,7 +122,7 @@ test('a post_to_group from a bot lands in the group as that bot and wakes its te
   const { startHost } = await import('../runner/host')
   const { startGroupsServer, groupToken } = await import('../runner/groups-server')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
   const server = await startGroupsServer({ secret: SECRET })
 
   try {
@@ -151,7 +151,7 @@ test('list_groups answers with the groups the bot is in', async () => {
   const { startHost } = await import('../runner/host')
   const { startGroupsServer, groupToken } = await import('../runner/groups-server')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
   const server = await startGroupsServer({ secret: SECRET })
 
   try {

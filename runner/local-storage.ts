@@ -8,9 +8,15 @@ import { dirname, join } from 'node:path'
 
 const SAVE_DELAY_MS = 200
 
+let active: { dispose(): void } | null = null
+
 export function installLocalStorage(stateDir: string) {
+  // A second install replaces the first. The old one's pending save must not write over the new state.
+  active?.dispose()
+
   const file = join(stateDir, 'runner-state.json')
   const values = new Map<string, string>()
+  let disposed = false
 
   try {
     for (const [key, value] of Object.entries(JSON.parse(readFileSync(file, 'utf8')))) {
@@ -23,6 +29,7 @@ export function installLocalStorage(stateDir: string) {
   let timer: ReturnType<typeof setTimeout> | null = null
 
   const flush = () => {
+    if (disposed) return
     if (timer) clearTimeout(timer)
     timer = null
     mkdirSync(dirname(file), { recursive: true })
@@ -32,7 +39,7 @@ export function installLocalStorage(stateDir: string) {
   }
 
   const save = () => {
-    if (timer) return
+    if (timer || disposed) return
     timer = setTimeout(() => {
       timer = null
       try {
@@ -66,5 +73,16 @@ export function installLocalStorage(stateDir: string) {
     }
   })
 
-  return { flush }
+  const instance = {
+    flush,
+    dispose() {
+      disposed = true
+
+      if (timer) clearTimeout(timer)
+      timer = null
+    }
+  }
+
+  active = instance
+  return instance
 }

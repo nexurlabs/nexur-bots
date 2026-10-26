@@ -87,7 +87,7 @@ test('a message the app posts in a runner group is answered by the runner, not t
   const { startHost } = await import('../runner/host')
   const { pickUpNewMessages } = await import('../runner/pickup')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
 
   try {
     const room = rooms.createRoom('Runner owned', ['alpha'], { reply: 'everyone', runner: true })
@@ -111,7 +111,7 @@ test('a message is picked up once, not again on the next pass', async () => {
   const { startHost } = await import('../runner/host')
   const { pickUpNewMessages } = await import('../runner/pickup')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
 
   try {
     const room = rooms.createRoom('Picked once', ['alpha'], { reply: 'everyone', runner: true })
@@ -134,7 +134,7 @@ test('the runner leaves a group the app owns alone', async () => {
   const { startHost } = await import('../runner/host')
   const { pickUpNewMessages } = await import('../runner/pickup')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
 
   try {
     const room = rooms.createRoom('App owned', ['alpha'], { reply: 'everyone' })

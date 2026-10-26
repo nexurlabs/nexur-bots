@@ -68,7 +68,7 @@ afterEach(() => {
 test('a group turn hands off from the lead to a teammate with no app open', async () => {
   const { startHost } = await import('../runner/host')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
 
   try {
     const room = rooms.createRoom('Runner group', ['alpha', 'beta'], { reply: 'everyone', runner: true })
@@ -99,7 +99,7 @@ test('a group turn hands off from the lead to a teammate with no app open', asyn
 test('the room state is saved in the runner folder and survives a restart', async () => {
   const { startHost } = await import('../runner/host')
   const rooms = await import('../src/lib/rooms')
-  const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
+  const host = await startHost({ hermesUrl: 'http://runner-test', stateDir, readToken: async () => 'test-token' })
 
   try {
     const room = rooms.createRoom('Saved group', ['alpha'], { reply: 'everyone', runner: true })
@@ -111,4 +111,23 @@ test('the room state is saved in the runner folder and survives a restart', asyn
 
   const saved = readFileSync(join(stateDir, 'runner-state.json'), 'utf8')
   expect(saved).toContain('remember this line')
+})
+
+test('the session token is read from the page Hermes serves, the way the app reads it', async () => {
+  const { readServedToken, wsUrlFor } = await import('../runner/host')
+  const realFetch = globalThis.fetch
+
+  try {
+    globalThis.fetch = (async () =>
+      new Response('<html><script>window.__HERMES_SESSION_TOKEN__ = "abc123";</script></html>')) as typeof fetch
+    expect(await readServedToken('http://127.0.0.1:42687')).toBe('abc123')
+
+    globalThis.fetch = (async () => new Response('<html>no token here</html>')) as typeof fetch
+    await expect(readServedToken('http://127.0.0.1:42687')).rejects.toThrow('did not serve a session token')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+
+  expect(wsUrlFor('http://127.0.0.1:42687', 'abc123')).toBe('ws://127.0.0.1:42687/api/ws?token=abc123')
+  expect(wsUrlFor('https://hermes.example', '')).toBe('wss://hermes.example/api/ws')
 })
