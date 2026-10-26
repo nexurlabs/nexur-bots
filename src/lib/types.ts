@@ -239,6 +239,8 @@ export interface RoomSettings {
   maxTurns?: number
   /** Standing instructions every member sees. */
   instructions?: string
+  /** The group's turns run on the VM runner, so they keep going with the app closed. Unset = this app runs them. */
+  runner?: boolean
 }
 
 export interface Room {

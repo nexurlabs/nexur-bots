@@ -12,6 +12,8 @@ export interface HostOptions {
   wsUrl: string
   /** Folder for the runner's state (rooms, read marks, notes). */
   stateDir: string
+  /** Mark every group as the runner's, so the app stops answering in them. Cutover only. */
+  ownAllRooms?: boolean
 }
 
 export async function startHost(options: HostOptions) {
@@ -20,17 +22,32 @@ export async function startHost(options: HostOptions) {
   const storage = installLocalStorage(options.stateDir)
   const { gateway } = await import('../src/lib/gateway')
   const { refreshProfiles } = await import('../src/lib/store')
-  const { loadRooms } = await import('../src/lib/rooms')
+  const rooms = await import('../src/lib/rooms')
   const { warmTeam } = await import('../src/lib/team')
+  const { pickUpNewMessages, startPickup } = await import('./pickup')
 
+  rooms.setConductor('runner')
   await gateway.connect(options.wsUrl)
   await refreshProfiles()
-  loadRooms()
+  rooms.loadRooms()
+
+  if (options.ownAllRooms) {
+    for (const room of Object.values(rooms.$rooms.get())) {
+      if (!room.settings?.runner) {
+        rooms.setRoomSettings(room.key, { ...room.settings, runner: true })
+      }
+    }
+  }
+
   warmTeam()
+  // The baseline pass records what is already in the rooms before the timed loop starts.
+  await pickUpNewMessages()
+  const pickup = startPickup()
 
   return {
     gateway,
     close() {
+      pickup.stop()
       gateway.close()
       storage.flush()
     }

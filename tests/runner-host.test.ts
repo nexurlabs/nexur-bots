@@ -71,7 +71,7 @@ test('a group turn hands off from the lead to a teammate with no app open', asyn
   const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
 
   try {
-    const room = rooms.createRoom('Runner group', ['alpha', 'beta'], { reply: 'everyone' })
+    const room = rooms.createRoom('Runner group', ['alpha', 'beta'], { reply: 'everyone', runner: true })
     rooms.postToRoom(room.key, '@alpha start')
 
     await waitFor(() => submittedTo('alpha').length === 1, 'the lead to take the turn')
@@ -102,7 +102,7 @@ test('the room state is saved in the runner folder and survives a restart', asyn
   const host = await startHost({ wsUrl: 'ws://runner-test', stateDir })
 
   try {
-    const room = rooms.createRoom('Saved group', ['alpha'], { reply: 'everyone' })
+    const room = rooms.createRoom('Saved group', ['alpha'], { reply: 'everyone', runner: true })
     rooms.postToRoom(room.key, 'remember this line')
     await waitFor(() => rooms.$rooms.get()[room.key]?.log.some(entry => entry.text === 'remember this line') ?? false, 'the message in the log')
   } finally {
