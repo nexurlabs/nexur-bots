@@ -14,6 +14,7 @@ const localServe = require('./local-serve.cjs')
 const guards = require('./guards.cjs')
 const { explainLocalStartError } = require('./local-start.cjs')
 const { checkKeyFile, explainKeyError } = require('./ssh-key.cjs')
+const { registrationsFor } = require('./tool-routes.cjs')
 const { adoptOldDataFolder, OLD_NAME } = require('./app-data.cjs')
 const tokenStore = require('./token-store.cjs')
 const { ensureGateway } = require('./gateway-ensure.cjs')
@@ -700,6 +701,48 @@ async function confirmMcpEntry(link, profile, name, url, bearer) {
   return { ok: true }
 }
 
+async function unregisterMcp(link, profile, name) {
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' }
+  if (link.hermesToken) headers['X-Hermes-Session-Token'] = link.hermesToken
+  const base = link.baseUrl.replace(/\/?$/, '/')
+  const scope = profile && profile !== 'default' ? `?profile=${encodeURIComponent(profile)}` : ''
+  try {
+    await fetch(new URL(`api/mcp/servers/${encodeURIComponent(name)}${scope}`, base).toString(), { method: 'DELETE', headers })
+  } catch {}
+}
+
+// Where the VM runner answers group conversations, when it does (set in settings.json). Empty = the
+// app answers them itself, as before.
+function runnerGroupsUrl() {
+  const url = readSettings().runnerGroupsUrl
+
+  return typeof url === 'string' ? url.trim() : ''
+}
+
+/**
+ * Writes one bot's group tool entries. Returns whether its conversation entry is confirmed, which is
+ * what gates the bot's first turn. With a runner, the conversation tools point at it and the app's
+ * own tools stay on this PC under their own server name.
+ */
+async function registerGroupTools(link, profile, who) {
+  const plan = registrationsFor({ mcpUrl: link.mcpUrl, runnerGroupsUrl: runnerGroupsUrl(), who })
+
+  for (const name of plan.remove) {
+    await unregisterMcp(link, profile, name)
+  }
+
+  let groupsOk = false
+
+  for (const entry of plan.add) {
+    const bearer = entry.token === 'app' ? localComputer.appToken(who) : localComputer.groupToken(who)
+    const ok = await registerMcp(link, profile, entry.name, entry.url, bearer)
+
+    if (entry.name === 'hermes-bots-groups') groupsOk = ok
+  }
+
+  return groupsOk
+}
+
 async function registerMcp(link, profile, name, url, bearer) {
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' }
   if (link.hermesToken) headers['X-Hermes-Session-Token'] = link.hermesToken
@@ -826,8 +869,7 @@ async function registerThisPc(link, profile, whoAs) {
   // "best effort" means the PC result, not that a bot whose groups route is unproven can have its
   // first turn. That is what `groupsReady` and the first-submit barrier are for.
   try {
-    const groupsUrl = link.mcpUrl.replace(/\/mcp$/, '') + `/groups/${encodeURIComponent(who)}`
-    const groupsOk = await registerMcp(link, profile, 'hermes-bots-groups', groupsUrl, localComputer.groupToken(who))
+    const groupsOk = await registerGroupTools(link, profile, who)
 
     groupsReadyBy.set(who, groupsOk)
   } catch (error) {
@@ -985,8 +1027,7 @@ async function ensureGroupsIdentity(who) {
   }
 
   try {
-    const groupsUrl = link.mcpUrl.replace(/\/mcp$/, '') + `/groups/${encodeURIComponent(name)}`
-    const ready = await registerMcp(link, profile, 'hermes-bots-groups', groupsUrl, localComputer.groupToken(name))
+    const ready = await registerGroupTools(link, profile, name)
 
     groupsReadyBy.set(name, ready)
 

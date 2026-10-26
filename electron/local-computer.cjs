@@ -24,6 +24,7 @@
 const http = require('node:http')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
+const { isRunnerTool } = require('./tool-routes.cjs')
 
 let electron = null
 try {
@@ -784,15 +785,26 @@ const GROUP_TOOLS = [
 // the tool list it read when it first connected, so the renderer asks it to reload once per change.
 const TOOLS_REVISION = crypto.createHash('sha256').update(JSON.stringify([TOOLS, GROUP_TOOLS])).digest('hex').slice(0, 16)
 
+// The app's tools that stay here when the VM runner answers the group conversation tools.
+const APP_TOOLS = GROUP_TOOLS.filter(tool => !isRunnerTool(tool.name))
+
 function groupToken(profile) {
   return crypto.createHmac('sha256', token).update(`groups:${profile}`).digest('hex')
+}
+
+// The bearer for `/app/<profile>`, the app's tools without the runner's conversation tools.
+function appToken(profile) {
+  return crypto.createHmac('sha256', token).update(`app:${profile}`).digest('hex')
 }
 
 function setAppToolHandler(fn) {
   appToolHandler = typeof fn === 'function' ? fn : null
 }
 
-async function handleGroups(msg, profile) {
+async function handleGroups(msg, profile, kind = 'groups') {
+  const tools = kind === 'app' ? APP_TOOLS : GROUP_TOOLS
+  const serverName = kind === 'app' ? 'hermes-bots-app' : 'hermes-bots-groups'
+
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') return null
   const { id, method, params } = msg
   const isNotification = id === undefined
@@ -804,7 +816,7 @@ async function handleGroups(msg, profile) {
       return rpcResult(id, {
         protocolVersion: (params && params.protocolVersion) || '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'hermes-bots-groups', version: '1.0.0' },
+        serverInfo: { name: serverName, version: '1.0.0' },
         instructions:
           'Tools from the NexurBots app. post_to_group posts into one of your groups as you; list_groups lists them; rename_group renames one, only when the user asks. ' +
           'get_profile shows your name, label and description there; update_profile changes them, only when the user asks. ' +
@@ -813,10 +825,10 @@ async function handleGroups(msg, profile) {
     }
     if (typeof method === 'string' && method.startsWith('notifications/')) return null
     if (method === 'ping') return rpcResult(id, {})
-    if (method === 'tools/list') return rpcResult(id, { tools: GROUP_TOOLS })
+    if (method === 'tools/list') return rpcResult(id, { tools })
     if (method === 'tools/call') {
       const name = String((params && params.name) || '')
-      if (!GROUP_TOOLS.some(tool => tool.name === name)) {
+      if (!tools.some(tool => tool.name === name)) {
         return rpcResult(id, { content: [{ type: 'text', text: `Unknown tool ${name}` }], isError: true })
       }
       if (!appToolHandler) {
@@ -868,12 +880,15 @@ function startServer({ onLog, token: keepToken, port: keepPort } = {}) {
       }
       const auth = req.headers['authorization'] || ''
       // `/groups/<profile>`: the app's group tools, answered for that bot.
-      const groupMatch = String(req.url || '').match(/^\/groups\/([^/?#]+)/)
+      // `/groups/<profile>` answers the conversation tools (the whole app set when no runner is on);
+      // `/app/<profile>` answers the app's own tools only, with its own bearer.
+      const groupMatch = String(req.url || '').match(/^\/(groups|app)\/([^/?#]+)/)
+      const routeKind = groupMatch ? groupMatch[1] : ''
       let groupProfile = ''
       try {
-        groupProfile = groupMatch ? decodeURIComponent(groupMatch[1]) : ''
+        groupProfile = groupMatch ? decodeURIComponent(groupMatch[2]) : ''
       } catch {}
-      const expected = groupProfile ? `Bearer ${groupToken(groupProfile)}` : `Bearer ${token}`
+      const expected = groupProfile ? `Bearer ${routeKind === 'app' ? appToken(groupProfile) : groupToken(groupProfile)}` : `Bearer ${token}`
       if (!safeEqual(auth, expected)) {
         log(`mcp request refused on ${groupProfile ? `the ${groupProfile} groups route` : 'the This PC route'}: ${refusalReason(auth, groupProfile)}`)
         res.writeHead(401, { 'Content-Type': 'application/json' })
@@ -896,7 +911,7 @@ function startServer({ onLog, token: keepToken, port: keepPort } = {}) {
         }
         try {
           if (Array.isArray(parsed)) {
-            const results = (await Promise.all(parsed.map(msg => (groupProfile ? handleGroups(msg, groupProfile) : handleOne(msg))))).filter(Boolean)
+            const results = (await Promise.all(parsed.map(msg => (groupProfile ? handleGroups(msg, groupProfile, routeKind) : handleOne(msg))))).filter(Boolean)
             if (!results.length) {
               res.writeHead(202)
               res.end()
@@ -906,7 +921,7 @@ function startServer({ onLog, token: keepToken, port: keepPort } = {}) {
             res.end(JSON.stringify(results))
             return
           }
-          const result = groupProfile ? await handleGroups(parsed, groupProfile) : await handleOne(parsed)
+          const result = groupProfile ? await handleGroups(parsed, groupProfile, routeKind) : await handleOne(parsed)
           if (!result) {
             res.writeHead(202)
             res.end()
@@ -984,4 +999,4 @@ function setCapture(fn) {
   captureShot = typeof fn === 'function' ? fn : captureScreenshot
 }
 
-module.exports = { startServer, stopServer, setGranted, isGranted, getState, getLastShot, setOnGrantChange, setAppToolHandler, groupToken, setCapture, TOOLS, TOOLS_REVISION, SERVER_NAME: 'hermes-bots-this-pc' }
+module.exports = { startServer, stopServer, setGranted, isGranted, getState, getLastShot, setOnGrantChange, setAppToolHandler, groupToken, appToken, APP_TOOLS, setCapture, TOOLS, TOOLS_REVISION, SERVER_NAME: 'hermes-bots-this-pc' }
