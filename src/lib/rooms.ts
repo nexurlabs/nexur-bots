@@ -62,6 +62,19 @@ function safeRecord<T>(source?: Record<string, T>): Record<string, T> {
 export const $roomTyping = atom<Record<string, Record<string, RoomTypingTurn>>>(safeRecord())
 export const $roomRunning = atom<Record<string, boolean>>({})
 
+/** Which process runs group turns: this app, or the VM runner (runner/host.ts). A group's turns run
+ * only in the process that owns it, so the app and the runner never both answer the same message. */
+export type Conductor = 'app' | 'runner'
+let conductor: Conductor = 'app'
+
+export function setConductor(role: Conductor) {
+  conductor = role
+}
+
+export function ownsTurns(room: Room): boolean {
+  return (roomSettings(room).runner ? 'runner' : 'app') === conductor
+}
+
 let deleted: Record<string, number> = {}
 
 const offlineSaid = new Map<string, number>()
@@ -153,6 +166,10 @@ export function cleanSettings(raw: unknown): RoomSettings | undefined {
     out.instructions = input.instructions.trim().slice(0, 800)
   }
 
+  if (typeof input.runner === 'boolean') {
+    out.runner = input.runner
+  }
+
   return Object.keys(out).length ? out : undefined
 }
 
@@ -164,7 +181,8 @@ export function roomSettings(room: Room): Required<Omit<RoomSettings, 'instructi
     reply: own.reply || 'everyone',
     stop: own.stop || 'turn',
     maxTurns: own.maxTurns || Math.min(24, Math.max(8, room.members.length * 2)),
-    instructions: own.instructions || ''
+    instructions: own.instructions || '',
+    runner: own.runner === true
   }
 }
 
@@ -851,6 +869,13 @@ function setTyping(key: string, member: string, messages: ChatMsg[] | null) {
 }
 
 function enqueue(key: string, wakes: Wake[]) {
+  const owned = $rooms.get()[key]
+
+  // Another process owns this group's turns: its runner (or this app) answers the wakes, not this one.
+  if (owned && !ownsTurns(owned)) {
+    return
+  }
+
   const queue = queues.get(key) || []
 
   for (const wake of wakes) {
@@ -928,19 +953,10 @@ export interface PostOptions {
   threadOf?: string
 }
 
-export function postToRoom(key: string, text: string, attachments: Pending[] = [], opts: PostOptions = {}) {
-  const found = $rooms.get()[key]
-  const body = text.trim()
-
-  if (!found || (!body && !attachments.length)) {
-    return
-  }
-
-  // Any question card still open goes unanswered (an answer marks its card before posting).
-  const room = found.log.some(e => e.ask?.status === 'open')
-    ? { ...found, log: found.log.map(e => (e.ask?.status === 'open' ? { ...e, ask: { ...e.ask, status: 'dismissed' as const } } : e)) }
-    : found
-
+/** Who a user message wakes, and the holds it leaves on the room. Shared by a message the app posts
+ * (postToRoom) and one the runner picks up from the synced room (pickUpMessage), so both answer by
+ * the same rules. It changes nothing: the caller stores the holds and wakes the members. */
+function planUserMessage(room: Room, body: string, opts: PostOptions) {
   const settings = roomSettings(room)
   const bots = roomBots(room)
   const names = bots.map(bot => bot.name)
@@ -961,25 +977,6 @@ export function postToRoom(key: string, text: string, attachments: Pending[] = [
 
   const held = new Set(Object.keys(holds || {}))
   const blocked = new Set([...held, ...stopped])
-
-  const entry: RoomEntry = {
-    id: newId('g'),
-    at: Date.now(),
-    from: { kind: 'user', name: $userName.get() },
-    text: body,
-    ...(attachments.length ? { attachments: attachments.map(toMsgAttachment) } : {}),
-    ...(opts.threadOf ? { threadOf: opts.threadOf } : {})
-  }
-
-  if (attachments.length) {
-    sentFiles.set(entry.id, attachments)
-    void rememberAttachments(`room:${room.roomId}`, attachments)
-  }
-
-  // A new message from the user gives members that failed last time another go.
-  failedLast.delete(key)
-  putRoom({ ...room, log: [...room.log, entry], holds })
-
   const lead = bots.find(bot => bot.lead)
   let wakes: Wake[]
 
@@ -1013,15 +1010,7 @@ export function postToRoom(key: string, text: string, attachments: Pending[] = [
     // A member who has since left the room must not silently widen into a room-wide wake — that is
     // the same class of bug as a reply target that is not a member.
     if (!names.includes(opts.answerTo)) {
-      putRoom(
-        {
-          ...room,
-          log: [...room.log, { id: newId('g'), at: Date.now(), from: { kind: 'user', name: $userName.get() }, text: `⚠️ ${opts.answerTo} isn't in this group, so nobody was asked to reply.` }]
-        },
-        false
-      )
-
-      return
+      return { wakes: [], stopped, holds, misaddressed: true }
     }
 
     wakes = [{ name: opts.answerTo, why: 'asked' }]
@@ -1033,15 +1022,90 @@ export function postToRoom(key: string, text: string, attachments: Pending[] = [
     wakes.sort((a, b) => rankOf(bots, a.name) - rankOf(bots, b.name))
   }
 
+  return { wakes, stopped, holds, misaddressed: false }
+}
+
+/** Starts the wakes for a user message: a fresh chain, the stop itself, then the members. */
+function wakeFor(key: string, plan: { wakes: Wake[]; stopped: string[] }) {
   // A user message opens a fresh chain. A bot still tooling must not block the idle
   // members from reading it. Direct @mentions do not spend the cap.
   speaking.delete(key)
   chainTurns.set(key, 0)
 
   // The stop itself: aborts whoever it names, right now.
-  void interruptMembers(key, stopped)
-  enqueue(key, wakes)
+  void interruptMembers(key, plan.stopped)
+  enqueue(key, plan.wakes)
   void drain(key)
+}
+
+export function postToRoom(key: string, text: string, attachments: Pending[] = [], opts: PostOptions = {}) {
+  const found = $rooms.get()[key]
+  const body = text.trim()
+
+  if (!found || (!body && !attachments.length)) {
+    return
+  }
+
+  // Any question card still open goes unanswered (an answer marks its card before posting).
+  const room = found.log.some(e => e.ask?.status === 'open')
+    ? { ...found, log: found.log.map(e => (e.ask?.status === 'open' ? { ...e, ask: { ...e.ask, status: 'dismissed' as const } } : e)) }
+    : found
+
+  const plan = planUserMessage(room, body, opts)
+
+  const entry: RoomEntry = {
+    id: newId('g'),
+    at: Date.now(),
+    from: { kind: 'user', name: $userName.get() },
+    text: body,
+    ...(attachments.length ? { attachments: attachments.map(toMsgAttachment) } : {}),
+    ...(opts.threadOf ? { threadOf: opts.threadOf } : {})
+  }
+
+  if (attachments.length) {
+    sentFiles.set(entry.id, attachments)
+    void rememberAttachments(`room:${room.roomId}`, attachments)
+  }
+
+  // A new message from the user gives members that failed last time another go.
+  failedLast.delete(key)
+  putRoom({ ...room, log: [...room.log, entry], holds: plan.holds })
+
+  if (plan.misaddressed) {
+    putRoom(
+      {
+        ...room,
+        log: [...room.log, { id: newId('g'), at: Date.now(), from: { kind: 'user', name: $userName.get() }, text: `⚠️ ${opts.answerTo} isn't in this group, so nobody was asked to reply.` }]
+      },
+      false
+    )
+
+    return
+  }
+
+  wakeFor(key, plan)
+}
+
+/** The runner's side of a message the app posted. The entry is already in the synced log, so nothing
+ * is appended; the same wakes run. Only for a group this process owns. */
+export function pickUpMessage(key: string, entry: RoomEntry) {
+  const room = $rooms.get()[key]
+  const body = entry.text.trim()
+
+  if (!room || !ownsTurns(room) || entry.from.kind !== 'user' || !body) {
+    return
+  }
+
+  const plan = planUserMessage(room, body, { threadOf: entry.threadOf })
+
+  // A new message from the user gives members that failed last time another go.
+  failedLast.delete(key)
+
+  if (JSON.stringify(plan.holds || null) !== JSON.stringify(room.holds || null)) {
+    putRoom({ ...room, holds: plan.holds })
+  }
+
+  wakeFor(key, plan)
 }
 
 // ── posts from a bot's 1:1 chat (the group tool) ──────────────────────────
@@ -1334,6 +1398,12 @@ async function steerLive(key: string, member: string, entry: RoomEntry | undefin
 
 async function drain(key: string) {
   if (running.has(key)) {
+    return
+  }
+
+  const owned = $rooms.get()[key]
+
+  if (owned && !ownsTurns(owned)) {
     return
   }
 
