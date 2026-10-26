@@ -94,6 +94,22 @@ function Find-AppExe {
   return $null
 }
 
+function Test-AppDataRedirected {
+  # Claude Desktop runs its shell as an MSIX app, and MSIX redirects file writes under %LOCALAPPDATA% into the
+  # app's package store. Hermes' Python step then fails with MissingPythonMinorVersionLinkTargetDirectory, so
+  # this writes a probe file and checks whether it shows up in a package's LocalCache.
+  $name = "nexurbots-probe-$([guid]::NewGuid().ToString('N')).tmp"
+  $probe = Join-Path $env:LOCALAPPDATA $name
+  Set-Content -LiteralPath $probe -Value 'probe'
+  try {
+    $copies = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -ErrorAction SilentlyContinue |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "LocalCache\Local\$name") }
+    return [bool]$copies
+  } finally {
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Install-NexurBots {
   Write-Host 'NexurBots, one-command install'
   if ($env:OS -ne 'Windows_NT') {
@@ -142,6 +158,9 @@ function Install-NexurBots {
     if (Test-Path -LiteralPath $HermesExe) {
       Step 'Hermes is already installed'
     } else {
+      if (Test-AppDataRedirected) {
+        throw 'This PowerShell is running inside an app that redirects AppData writes (Claude Desktop does this), and the Hermes installer fails there. Open PowerShell from the Start menu, not from inside that app, then run this again.'
+      }
       Step 'Installing Hermes (Nous Research installer)'
       Invoke-RestMethod -Uri $HermesInstallerUrl | Invoke-Expression
       if (-not (Test-Path -LiteralPath $HermesExe)) {
