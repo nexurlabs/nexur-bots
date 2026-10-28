@@ -877,7 +877,7 @@ function buildPrompt(room: Room, bot: Bot, fresh: RoomEntry[], why: Why, marks: 
     'Only speak when you add something new: an answer, a fact, a decision, or work you did. Don\'t repeat, agree with, or sum up what someone already said. @mention a teammate only when you want them to act next. If you have nothing to add, reply exactly: (pass)',
     // What you write while working is progress: it lands in the group's Work section, not the chat. Your reply is the answer.
     directoryInput(bot.name, 'group').appTools
-      ? `If an intermediate step has to reach the group right now (a decision, a blocker, a question someone must answer), post it with ${GROUP_POST_TOOL} to the group "${room.name}", then keep going. Your reply when you finish is the answer, so don't repeat what you already posted. Otherwise, keep your working notes out of the chat: they go to Work on their own.`
+      ? `Only a blocker, a decision, or a question that someone in the group must answer now goes to the group, with ${GROUP_POST_TOOL} to "${room.name}". Never post progress with it: no "checking now", "calling a tool", or "here's what I'm doing". Write progress as plain text instead, and it goes to Work on its own. Your reply when you finish is the answer, so don't repeat what you already posted.`
       : 'Keep your working notes out of the chat: what you write while working goes to the group\'s Work section on its own. Your reply is the answer.',
     '\u0000',
     'New messages since your last turn:',
