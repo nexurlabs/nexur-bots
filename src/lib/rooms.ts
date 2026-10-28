@@ -877,7 +877,7 @@ function buildPrompt(room: Room, bot: Bot, fresh: RoomEntry[], why: Why, marks: 
     'Only speak when you add something new: an answer, a fact, a decision, or work you did. Don\'t repeat, agree with, or sum up what someone already said. @mention a teammate only when you want them to act next. If you have nothing to add, reply exactly: (pass)',
     // What you write while working is progress: it lands in the group's Work section, not the chat. Your reply is the answer.
     directoryInput(bot.name, 'group').appTools
-      ? `If an intermediate step has to reach the group right now (a decision, a blocker, a question someone must answer), post it with ${GROUP_POST_TOOL} to the group "${room.name}". Otherwise, keep your working notes out of the chat: they go to Work on their own.`
+      ? `If an intermediate step has to reach the group right now (a decision, a blocker, a question someone must answer), post it with ${GROUP_POST_TOOL} to the group "${room.name}", then keep going. Your reply when you finish is the answer, so don't repeat what you already posted. Otherwise, keep your working notes out of the chat: they go to Work on their own.`
       : 'Keep your working notes out of the chat: what you write while working goes to the group\'s Work section on its own. Your reply is the answer.',
     '\u0000',
     'New messages since your last turn:',
@@ -1320,12 +1320,13 @@ export function postFromBot(member: string, group: string, text: string, replyTo
 
   const typing = $roomTyping.get()
   const busyIn = Object.entries(typing).find(([, members]) => hasTypingMember(members, member))
+  // From its own turn in this group, a bot may post an intermediate step. Its answer still posts when the turn ends.
+  const midTurnHere = busyIn?.[0] === room.key
 
-  if (busyIn) {
+  if (busyIn && !midTurnHere) {
     const where = $rooms.get()[busyIn[0]]
-    return busyIn[0] === room.key
-      ? { ok: false, text: `You are taking a turn in "${room.name}" right now. Just reply there; your reply is the post.` }
-      : { ok: false, text: `You are taking a turn in "${where?.name || 'another group'}" right now. Group posts only work from your 1:1 chat; @mention teammates in your reply instead.` }
+
+    return { ok: false, text: `You are taking a turn in "${where?.name || 'another group'}" right now. Group posts only work from your 1:1 chat; @mention teammates in your reply instead.` }
   }
 
   if (room.holds?.[member]) {
@@ -1360,7 +1361,8 @@ export function postFromBot(member: string, group: string, text: string, replyTo
 
   toolPosts.push({ member, key: room.key, at: now })
 
-  const entry: RoomEntry = { id: newId('g'), at: now, from: { kind: 'member', name: member }, text: body, via: 'dm', ...(threadOf ? { threadOf } : {}) }
+  // A post from a 1:1 chat is marked as such; a step posted from the group's own turn is just the bot talking.
+  const entry: RoomEntry = { id: newId('g'), at: now, from: { kind: 'member', name: member }, text: body, ...(midTurnHere ? {} : { via: 'dm' as const }), ...(threadOf ? { threadOf } : {}) }
   putRoom({ ...room, log: [...room.log, entry] })
 
   // Exactly what a bot's own reply does in the room: wake the teammates it @mentions, except
