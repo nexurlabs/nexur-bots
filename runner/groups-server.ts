@@ -23,8 +23,9 @@ export const GROUP_TOOLS = [
     name: 'post_to_group',
     description:
       'Post a message into one of your group chats in the NexurBots app, as you. Use it from your 1:1 chat with the user ' +
-      'when they ask you to tell a group something, or to hand group work on. Inside a group chat, use it only for an intermediate ' +
-      'step the group must see now (a decision, a blocker, a question); your reply when you finish is the answer, so do not repeat what you posted. ' +
+      'when they ask you to tell a group something, or to hand group work on. Inside a group chat, use it only for a blocker, a decision, ' +
+      'or a question the group must answer now, never for progress ("checking now", "calling a tool"): progress goes to the group\'s Work on its own. ' +
+      'Your reply when you finish is the answer, so do not repeat what you posted. ' +
       'Teammates you @mention in the text are asked to answer there, following that group\'s rules. Only groups you are a member of.',
     inputSchema: {
       type: 'object',
