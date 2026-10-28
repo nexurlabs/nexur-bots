@@ -200,3 +200,54 @@ test('notes sync up to the profile, and notes another device wrote come back in'
 
   expect(workOf(room.roomId).map(item => item.text).sort()).toEqual(['Local note.', 'Remote note.'])
 })
+
+test('a bot can post an intermediate step to its own group mid-turn; the answer still posts at the end', async () => {
+  const room = newRoom(['alpha', 'beta'])
+
+  rooms.postToRoom(room.key, '@alpha look into it')
+  await flush()
+
+  const runtime = runtimeOf('alpha')
+
+  emit(runtime, { type: 'message.start', payload: {} })
+  emit(runtime, { type: 'message.delta', payload: { text: 'Looking at the build now.' } })
+  await flush()
+
+  // A decision the group must see now, naming beta. It posts from alpha's own turn in this group.
+  const posted = rooms.postFromBot('alpha', room.name, '@beta the build fails on main, can you check the lockfile?')
+
+  expect(posted.ok).toBe(true)
+  await flush()
+  expect(logOf(room.key)).toEqual(['@alpha look into it', '@beta the build fails on main, can you check the lockfile?'])
+  expect(rooms.$rooms.get()[room.key].log.at(-1)?.via).toBeUndefined()
+
+  // The turn's answer still posts once, after the step.
+  emit(runtime, { type: 'message.complete', payload: { text: 'Build check started, and I will report back when it finishes.' } })
+  await flush(40)
+
+  expect(logOf(room.key)).toEqual([
+    '@alpha look into it',
+    '@beta the build fails on main, can you check the lockfile?',
+    'Build check started, and I will report back when it finishes.'
+  ])
+
+  // Beta was woken by the step and its prompt carries it.
+  expect(promptsFor('beta').at(-1) || '').toContain('the build fails on main, can you check the lockfile?')
+})
+
+test('a bot busy in one group still cannot post to another group', async () => {
+  const busy = newRoom(['alpha'])
+  const other = newRoom(['alpha'])
+
+  rooms.postToRoom(busy.key, '@alpha work on it')
+  await flush()
+  emit(runtimeOf('alpha'), { type: 'message.start', payload: {} })
+  emit(runtimeOf('alpha'), { type: 'message.delta', payload: { text: 'Still working.' } })
+  await flush()
+
+  const refused = rooms.postFromBot('alpha', other.name, 'hello from the wrong group')
+
+  expect(refused.ok).toBe(false)
+  expect(refused.text).toContain('taking a turn')
+  expect(logOf(other.key)).toEqual([])
+})
