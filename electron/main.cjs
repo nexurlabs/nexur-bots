@@ -32,17 +32,27 @@ let win = null
 // ── settings file ─────────────────────────────────────────────────────────
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')
 
+let lastSettings = null
+
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))
+    lastSettings = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))
+    return lastSettings
   } catch {
+    // A file that is there but unreadable (caught mid-write, a disk hiccup) keeps the last good copy: an empty
+    // read would drop the runner setting and move the bots' group routes back to this PC.
+    if (fs.existsSync(settingsPath())) return lastSettings || {}
     return {}
   }
 }
 
+// Written beside the file and renamed over it, so a reader never sees half a file.
 function writeSettings(value) {
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true })
-  fs.writeFileSync(settingsPath(), JSON.stringify(value, null, 2))
+  const tmp = `${settingsPath()}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2))
+  fs.renameSync(tmp, settingsPath())
+  lastSettings = value
 }
 
 function seal(text) {
@@ -1429,12 +1439,31 @@ function smokeCheck() {
   })
 }
 
-app.whenReady().then(() => {
-  voicePermissions()
-  createWindow()
-  if (SMOKE) smokeCheck()
-  else ensureDesktopShortcut()
-})
+// One copy at a time. A second launch hands its request to this one and exits, so two copies never run side by
+// side: each would open its own tunnel and re-register the bots' tools.
+const onlyCopy = app.requestSingleInstanceLock()
+
+if (!onlyCopy) {
+  app.exit(0)
+} else {
+  app.on('second-instance', () => {
+    if (!win || win.isDestroyed()) {
+      createWindow()
+      return
+    }
+
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+
+  app.whenReady().then(() => {
+    voicePermissions()
+    createWindow()
+    if (SMOKE) smokeCheck()
+    else ensureDesktopShortcut()
+  })
+}
 app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
   for (const child of children) {
