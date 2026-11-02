@@ -6,7 +6,7 @@
  * ui_meta['hermes-bots-groups'] (the format Hermes's Bots mode used), with the
  * full local log kept on this device.
  */
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
 import { refreshExternalSoon } from './activity'
 import { attachAll, blobOf, rememberAttachments, steerImages, toMsgAttachment, type Pending } from './attachments'
@@ -32,6 +32,14 @@ const WORK_KEY = 'hermes-bots-work'
 const WORK_MAX_BYTES = 24_000
 const WORK_PER_ROOM = 40
 const WORK_TEXT = 400
+// The runner's live turns: which bots are working in a group it runs. The app reads them (see applyLive).
+const LIVE_KEY = 'hermes-bots-live'
+const LIVE_DEBOUNCE_MS = 400
+/** The runner says it is still working this often while a turn runs, so a dead runner's turns fade out. */
+const LIVE_BEAT_MS = 60_000
+const LIVE_STALE_MS = 3 * 60_000
+/** A save that keeps losing to other writers tries this many times before it waits for the next change. */
+const SAVE_ATTEMPTS = 5
 /** A member's turn ends if Hermes sends nothing at all for this long (a dropped socket, a wedged run). */
 const TURN_IDLE_MS = 5 * 60_000
 // The clock the scheduler actually arms. A module-level seam so a test can shorten it; production
@@ -68,6 +76,18 @@ export const $roomTyping = atom<Record<string, Record<string, RoomTypingTurn>>>(
 export const $roomRunning = atom<Record<string, boolean>>({})
 /** Work notes from every group, oldest first. The Work pane shows them per bot. */
 export const $roomWork = atom<WorkItem[]>([])
+/** The turns the runner runs in groups this app does not run. The app shows them and never runs them. */
+export const $runnerTyping = atom<Record<string, Record<string, RoomTypingTurn>>>(safeRecord())
+/** Every turn in every group, whichever process runs it. The chat and the roster show this one. */
+export const $typingAll = computed([$roomTyping, $runnerTyping], (own, runner) => {
+  const all = safeRecord<Record<string, RoomTypingTurn>>()
+
+  for (const key of new Set([...Object.keys(runner), ...Object.keys(own)])) {
+    all[key] = { ...runner[key], ...own[key] }
+  }
+
+  return all
+})
 
 /** Which process runs group turns: this app, or the VM runner (runner/host.ts). A group's turns run
  * only in the process that owns it, so the app and the runner never both answer the same message. */
@@ -258,7 +278,19 @@ export function loadRooms(force = false) {
     }
   }
 
+  roomsRevision = revisionOf(row, SYNC_KEY)
   $rooms.set(next)
+  applyLive(row)
+}
+
+/** The revision of each synced key whose content is in memory. A write at another revision takes that content in first. */
+let roomsRevision: number | null = null
+let workRevision: number | null = null
+
+function revisionOf(row: { ui_meta_revisions?: Record<string, number> } | undefined, key: string) {
+  const revision = row?.ui_meta_revisions?.[key]
+
+  return typeof revision === 'number' ? revision : null
 }
 
 let saveTimer: null | ReturnType<typeof setTimeout> = null
@@ -340,8 +372,29 @@ function envelopeFor(rooms: Record<string, Room>) {
   return envelope
 }
 
+/** Takes the synced rooms in, keeping this device's messages and deletions that are not synced yet. */
+function takeRemoteRooms() {
+  const local = $rooms.get()
+  const deletedHere = { ...deleted }
+
+  loadRooms(true)
+  deleted = { ...deleted, ...deletedHere }
+
+  const merged = { ...$rooms.get() }
+
+  for (const key of Object.keys(deletedHere)) {
+    delete merged[key]
+  }
+
+  for (const [key, room] of Object.entries(local)) {
+    merged[key] = merged[key] ? { ...merged[key], log: mergeLogs(merged[key].log, room.log) } : room
+  }
+
+  $rooms.set(merged)
+}
+
 export async function saveRooms() {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
     const row = defaultRow()
 
     if (!row) {
@@ -349,6 +402,14 @@ export async function saveRooms() {
     }
 
     const revision = row.ui_meta_revisions?.[SYNC_KEY]
+
+    // Another writer saved since this device last took the rooms in: take its messages in before this
+    // write goes out, so the write cannot drop them.
+    if (typeof revision === 'number' && revision !== roomsRevision) {
+      takeRemoteRooms()
+      roomsRevision = revision
+    }
+
     const result = await gateway.request<any>('profiles.configure', {
       name: row.name,
       profile: row.name,
@@ -357,21 +418,14 @@ export async function saveRooms() {
     })
 
     if (result?.applied?.ui_meta_conflicts && Object.keys(result.applied.ui_meta_conflicts).length) {
-      // Someone else wrote rooms: merge theirs in and try again.
-      const local = $rooms.get()
+      // Someone else wrote rooms: take theirs in and try again.
       await refreshProfiles()
-      loadRooms(true)
-      const merged = { ...$rooms.get() }
-
-      for (const [key, room] of Object.entries(local)) {
-        merged[key] = merged[key] ? { ...merged[key], log: mergeLogs(merged[key].log, room.log) } : room
-      }
-
-      $rooms.set(merged)
+      takeRemoteRooms()
       continue
     }
 
     const revisions = result?.applied?.ui_meta_revisions || {}
+    roomsRevision = typeof revisions[SYNC_KEY] === 'number' ? revisions[SYNC_KEY] : null
     $profiles.set(
       $profiles.get().map(entry =>
         entry.name === row.name
@@ -386,6 +440,10 @@ export async function saveRooms() {
 
     return
   }
+
+  // Still losing to other writers: try again after the next change instead of dropping these messages.
+  console.warn('room sync: still conflicting, will retry')
+  scheduleSave()
 }
 
 // ── work notes: what a bot worked out loud before its answer, kept out of the group log ──
@@ -477,15 +535,22 @@ function scheduleWorkSave() {
 }
 
 export async function saveWork() {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
     const row = defaultRow()
 
     if (!row) {
       return
     }
 
-    const envelope = workEnvelope(boundedWork($roomWork.get()))
     const revision = row.ui_meta_revisions?.[WORK_KEY]
+
+    // Same as the rooms: take the notes behind a newer revision in before this write goes out.
+    if (typeof revision === 'number' && revision !== workRevision) {
+      loadWork(true)
+      workRevision = revision
+    }
+
+    const envelope = workEnvelope(boundedWork($roomWork.get()))
     const result = await gateway.request<any>('profiles.configure', {
       name: row.name,
       profile: row.name,
@@ -501,6 +566,7 @@ export async function saveWork() {
     }
 
     const revisions = result?.applied?.ui_meta_revisions || {}
+    workRevision = typeof revisions[WORK_KEY] === 'number' ? revisions[WORK_KEY] : null
     $profiles.set(
       $profiles.get().map(entry =>
         entry.name === row.name
@@ -515,6 +581,9 @@ export async function saveWork() {
 
     return
   }
+
+  console.warn('work sync: still conflicting, will retry')
+  scheduleWorkSave()
 }
 
 /** Takes the synced work notes in, keeping any this device has not synced yet. */
@@ -523,11 +592,14 @@ function loadWork(force = false) {
     return
   }
 
-  const raw = defaultRow()?.ui_meta?.[WORK_KEY] as { items?: unknown } | undefined
+  const row = defaultRow()
+  const raw = row?.ui_meta?.[WORK_KEY] as { items?: unknown } | undefined
 
   if (!raw || !Array.isArray(raw.items)) {
     return
   }
+
+  workRevision = revisionOf(row, WORK_KEY)
 
   const merged = new Map<string, WorkItem>()
 
@@ -999,6 +1071,7 @@ function hasTypingMember(turns: Record<string, RoomTypingTurn> | undefined, memb
 function setTyping(key: string, member: string, messages: ChatMsg[] | null) {
   const all = $roomTyping.get()
   const turns = safeRecord(all[key])
+  const wasTyping = hasTypingMember(all[key], member)
 
   if (messages) {
     const thread = turnThread.get(`${key}|${member}`)
@@ -1016,6 +1089,134 @@ function setTyping(key: string, member: string, messages: ChatMsg[] | null) {
   }
 
   $roomTyping.set(next)
+
+  // A turn shows on the other process from its start to its end, so tell it when one starts or ends.
+  if (wasTyping !== Boolean(messages)) {
+    scheduleLiveSave()
+  }
+}
+
+// ── live turns: the runner's turns, shown on the device that does not run them ─────────────
+let liveTimer: null | ReturnType<typeof setTimeout> = null
+let liveBeat: null | ReturnType<typeof setInterval> = null
+
+/** The groups this process runs, with the members in a turn now, keyed by room id. */
+function workingNow(): Record<string, string[]> {
+  const working: Record<string, string[]> = {}
+
+  for (const [key, turns] of Object.entries($roomTyping.get())) {
+    const room = $rooms.get()[key]
+    const members = Object.keys(turns).filter(member => turns[member])
+
+    if (room && ownsTurns(room) && members.length) {
+      working[room.roomId] = members
+    }
+  }
+
+  return working
+}
+
+/** Only the runner publishes. The app runs and shows its own groups without it. */
+function scheduleLiveSave() {
+  if (conductor !== 'runner') {
+    return
+  }
+
+  if (liveTimer) {
+    clearTimeout(liveTimer)
+  }
+
+  liveTimer = setTimeout(() => {
+    liveTimer = null
+    void saveLive().catch(error => console.warn('live sync failed', error))
+  }, LIVE_DEBOUNCE_MS)
+}
+
+async function saveLive() {
+  const row = defaultRow()
+
+  if (!row) {
+    return
+  }
+
+  const working = workingNow()
+
+  await gateway.request('profiles.configure', {
+    name: row.name,
+    profile: row.name,
+    ui_meta: { [LIVE_KEY]: { version: 1, updatedAt: Date.now(), working } }
+  })
+
+  // Turns still running: say so again later, so the app knows this runner is alive. Nothing running: stop saying so.
+  if (Object.keys(working).length) {
+    liveBeat ??= setInterval(scheduleLiveSave, LIVE_BEAT_MS)
+  } else if (liveBeat) {
+    clearInterval(liveBeat)
+    liveBeat = null
+  }
+}
+
+/** Shows the runner's turns in the groups this process does not run. A key the runner has not refreshed
+ * lately shows nothing, so a runner that died cannot leave a bot "working" for good. */
+function applyLive(row: { ui_meta?: Record<string, unknown> | null } | undefined) {
+  if (conductor === 'runner') {
+    return
+  }
+
+  const live = row?.ui_meta?.[LIVE_KEY] as { updatedAt?: unknown; working?: Record<string, unknown> } | undefined
+  const fresh = typeof live?.updatedAt === 'number' && Date.now() - live.updatedAt < LIVE_STALE_MS
+  const working = fresh && live?.working ? live.working : {}
+  const all = safeRecord<Record<string, RoomTypingTurn>>()
+
+  for (const room of Object.values($rooms.get())) {
+    const names = Array.isArray(working[room.roomId]) ? (working[room.roomId] as unknown[]).filter((name): name is string => typeof name === 'string') : []
+
+    if (ownsTurns(room) || !names.length) {
+      continue
+    }
+
+    const turns = safeRecord<RoomTypingTurn>()
+
+    for (const member of names) {
+      turns[member] = { member, messages: [] }
+    }
+
+    all[room.key] = turns
+  }
+
+  if (JSON.stringify(all) !== JSON.stringify($runnerTyping.get())) {
+    $runnerTyping.set(all)
+  }
+}
+
+/** Reads the runner's live turns from a light profile list: no session fields, no bot refresh, no rooms reload. */
+export async function refreshLive() {
+  if (conductor === 'runner') {
+    return
+  }
+
+  const result = await gateway.request<{ profiles?: Array<{ name: string; is_default?: boolean; ui_meta?: Record<string, unknown> }> }>(
+    'profiles.list',
+    { include_sessions: false },
+    15_000
+  )
+  const profiles = result?.profiles || []
+
+  applyLive(profiles.find(row => row.name === 'default') || profiles.find(row => row.is_default))
+}
+
+/** Reads the runner's live turns every few seconds, while a group runs on the runner and the window is in view. */
+export function watchLive(intervalMs = 5_000) {
+  const timer = setInterval(() => {
+    const runnerGroup = Object.values($rooms.get()).some(room => roomSettings(room).runner)
+    const visible = typeof document === 'undefined' || document.visibilityState === 'visible'
+
+    if (runnerGroup && visible && gateway.state.get() === 'open') {
+      void refreshLive().catch(() => undefined)
+    }
+  }, intervalMs)
+
+  return () => clearInterval(timer)
 }
 
 function enqueue(key: string, wakes: Wake[]) {

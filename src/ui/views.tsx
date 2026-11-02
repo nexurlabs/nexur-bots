@@ -16,7 +16,7 @@ import { userReact } from '../lib/react-actions'
 import { $chatReactions, loadChatReactions, withChatReactions } from '../lib/reactions'
 import { $jobs, stopJob, syncJobs, type Job } from '../lib/background'
 import { $chats, $outbox, chatShowsHistory, loadBotChat, outboxMessages, runtimeFor, sendToBot, stopBot } from '../lib/chat'
-import { $roomRunning, $rooms, $roomTyping, $roomWork, postToRoom, releaseHold, roomBots, stopRoom, type RoomTypingTurn } from '../lib/rooms'
+import { $roomRunning, $rooms, $roomWork, $typingAll, postToRoom, releaseHold, roomBots, stopRoom, type RoomTypingTurn } from '../lib/rooms'
 import { $selfEditNotes, type SelfEditNote } from '../lib/self-edit'
 import { $allBots, $bots, $lead, $panelOpen, $selection } from '../lib/store'
 import type { Bot, ChatMsg, Room, WorkItem } from '../lib/types'
@@ -382,7 +382,7 @@ function WorkButton({ room }: { room: Room }) {
 /** The Work pane: what each bot worked out loud in this group, per bot, newest first. Not the chat. */
 function WorkPane({ room }: { room: Room }) {
   const work = useStore($roomWork).filter(item => item.roomId === room.roomId)
-  const typing = useStore($roomTyping)[room.key] || {}
+  const typing = useStore($typingAll)[room.key] || {}
   const allBots = useStore($allBots)
   const close = () => $workRoom.set(null)
 
@@ -470,7 +470,7 @@ function roomMessages(room: Room, typing: RoomTypingTurn[]): ChatMsg[] {
 }
 
 export function RoomView({ room }: { room: Room }) {
-  const typingAll = useStore($roomTyping)
+  const typingAll = useStore($typingAll)
   const running = useStore($roomRunning)
   const allBots = useStore($allBots)
   const lead = useStore($lead)
