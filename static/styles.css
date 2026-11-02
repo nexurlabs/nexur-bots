@@ -869,6 +869,20 @@ input, textarea { font: inherit; color: inherit; }
 .model-list button[data-on] { background: color-mix(in srgb, var(--accent) 15%, #1c1c1c); }
 .model-list button svg { color: var(--accent-text); flex-shrink: 0; }
 .model-list small { color: var(--faint); font-size: 11.5px; }
+/* The model field: the list scrolls inside a height that fits the window, and the footer sits below it, never over it. */
+.model-field .model-search { width: 100%; }
+.model-field .model-list { display: block; max-height: min(360px, 44vh); overflow-y: auto; padding: 6px; border-radius: 14px; background: #101010; border: 1px solid #222; }
+.model-group + .model-group { margin-top: 4px; }
+.model-group h5 { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 8px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.model-group h5 small { font-size: 11px; letter-spacing: 0; opacity: .8; }
+.model-field .model-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 9px; text-align: left; font-size: 13px; transition: background .12s; }
+.model-field .model-option:hover { background: #1a1a1a; }
+.model-field .model-option[data-on] { background: color-mix(in srgb, var(--accent) 16%, #1c1c1c); box-shadow: inset 2px 0 0 var(--accent-text); }
+.model-field .model-option .model-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Cascadia Code', Consolas, monospace; font-size: 12.5px; }
+.model-field .model-option .model-tag { flex: none; font-style: normal; font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: #222; color: var(--muted); }
+.model-field .model-option .model-check { flex: none; width: 14px; display: inline-flex; color: var(--accent-text); }
+.model-footer { align-items: center; gap: 10px; padding-top: 4px; }
+.model-footer .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12.5px; }
 select.input { appearance: none; padding-right: 34px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
 .banner.warn { align-items: center; background: color-mix(in srgb, var(--warn) 13%, #161616); color: #f6d9a8; }
 .banner.warn .banner-text { flex: 1; }
