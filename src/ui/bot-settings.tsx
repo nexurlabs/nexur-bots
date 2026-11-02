@@ -192,6 +192,31 @@ function Pane({ title, hint, children }: { title: string; hint?: string; childre
 }
 
 // ── model ─────────────────────────────────────────────────────────────────
+/** The family a model belongs to: `claude-opus-5-5` → `claude-opus`, `gpt-4o` → `gpt`, `llama3.1:8b` → `llama`. */
+export function modelFamily(model: string) {
+  return model.replace(/[-_.:]?\d.*$/, '') || model
+}
+
+/** Models grouped by family, in the order the provider lists them. */
+function groupModels(models: string[]) {
+  const groups: { family: string; items: string[] }[] = []
+  const at = new Map<string, number>()
+
+  for (const model of models) {
+    const family = modelFamily(model)
+    const index = at.get(family)
+
+    if (index === undefined) {
+      at.set(family, groups.length)
+      groups.push({ family, items: [model] })
+    } else {
+      groups[index].items.push(model)
+    }
+  }
+
+  return groups
+}
+
 function ModelPane({ cfg, name, save }: PaneProps) {
   const [providers, setProviders] = useState<ProviderOption[] | null>(null)
   const [failed, setFailed] = useState('')
@@ -284,16 +309,28 @@ function ModelPane({ cfg, name, save }: PaneProps) {
             </select>
             {provider?.warning ? <small>{provider.warning}</small> : null}
           </label>
-          <div className="field">
+          <div className="field model-field">
             <span>Model</span>
-            <input className="input" onChange={event => setQuery(event.target.value)} placeholder={`Search ${provider?.models.length || 0} models`} value={query} />
+            <input className="input model-search" onChange={event => setQuery(event.target.value)} placeholder={`Search ${provider?.models.length || 0} models`} value={query} />
             <div className="model-list">
-              {models.map(model => (
-                <button data-on={model === chosen || undefined} key={model} onClick={() => setChosen(model)} type="button">
-                  <span>{model}</span>
-                  {model === cfg.model.model && slug === cfg.model.provider ? <small>current</small> : null}
-                  {model === chosen ? <Icon name="check" size={14} /> : null}
-                </button>
+              {groupModels(models).map(group => (
+                <section className="model-group" key={group.family}>
+                  <h5>
+                    {group.family.replace(/-/g, ' ')}
+                    <small>{group.items.length}</small>
+                  </h5>
+                  {group.items.map(model => {
+                    const current = model === cfg.model.model && slug === cfg.model.provider
+
+                    return (
+                      <button aria-pressed={model === chosen} className="model-option" data-on={model === chosen || undefined} key={model} onClick={() => setChosen(model)} type="button">
+                        <span className="model-name">{model}</span>
+                        {current ? <em className="model-tag">current</em> : null}
+                        <span className="model-check">{model === chosen ? <Icon name="check" size={14} /> : null}</span>
+                      </button>
+                    )
+                  })}
+                </section>
               ))}
               {!models.length ? <div className="panel-empty">No model matches “{query}”.</div> : null}
             </div>
@@ -309,8 +346,8 @@ function ModelPane({ cfg, name, save }: PaneProps) {
               </button>
             </div>
           ) : null}
-          <div className="pane-actions sticky">
-            {dirty ? <small className="grow">Selected: {chosen}</small> : null}
+          <div className="pane-actions model-footer">
+            <small className="grow">{dirty ? `Switch to ${chosen}` : `Using ${cfg.model.model || 'Hermes default'}`}</small>
             <button className="btn primary" disabled={!dirty} onClick={() => void apply()} type="button">
               Use this model
             </button>
