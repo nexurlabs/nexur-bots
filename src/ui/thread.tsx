@@ -1762,9 +1762,13 @@ export function ThinkSlider({ bot, value, onChange, disabled }: { bot?: string; 
   const max = REASONING_CHOICES.length - 1
 
   return (
-    <div className="think-slider" data-default={value ? undefined : ''} data-show={show || undefined} title={`Thinking: ${label}`}>
+    <div className="think-slider" data-default={value ? undefined : ''} data-level={index} data-show={show || undefined} title={`Thinking: ${label}`}>
+      <span aria-hidden className="think-brain" style={{ ['--level' as string]: max ? `${index / max}` : '0' }}>
+        <Icon name="brain" size={18} />
+      </span>
       <input
         aria-label="Thinking effort for this message"
+        className="think-range"
         aria-valuetext={label}
         disabled={disabled}
         max={max}
