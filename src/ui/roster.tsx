@@ -6,7 +6,7 @@ import { $approvals, $askingScopes } from '../lib/approvals'
 import { $chats, type ChatState } from '../lib/chat'
 import { disconnect } from '../lib/connection'
 import { gateway } from '../lib/gateway'
-import { $rooms, $roomRunning, $roomTyping, clearRoom, compressRoomHistory, roomBots } from '../lib/rooms'
+import { $rooms, $roomRunning, $typingAll, clearRoom, compressRoomHistory, roomBots } from '../lib/rooms'
 import { $active, $allBots, $busy, $lead, $bots, $query, $searchOpen, $selection, $userName, setLead, toast } from '../lib/store'
 import type { Bot, ChatMsg, Room } from '../lib/types'
 import { Avatar, AvatarStack } from './avatar'
@@ -258,7 +258,7 @@ export function Roster() {
 function RoomRow({ room, on, running, index }: { room: Room; on: boolean; running: boolean; index: number }) {
   const members = roomBots(room)
   const asks = useStore($askingScopes)[`room:${room.roomId}`] || []
-  const typing = useStore($roomTyping)[room.key] || {}
+  const typing = useStore($typingAll)[room.key] || {}
   const asker = asks.length ? members.find(bot => bot.name === asks[0].bot)?.display || asks[0].bot : ''
   const streaming = Object.values(typing).some(turn => hasVisibleReply(turn.messages))
 

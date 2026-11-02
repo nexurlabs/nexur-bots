@@ -6,7 +6,7 @@ import { $chats, runtimeFor } from './lib/chat'
 import { demo } from './demo'
 import { boot } from './lib/connection'
 import { gateway } from './lib/gateway'
-import { $rooms, loadRooms } from './lib/rooms'
+import { $rooms, loadRooms, watchLive } from './lib/rooms'
 import { $bots, $panelOpen, $phase, $profiles, $selection, $toast, refreshProfiles } from './lib/store'
 import { ConnectScreen } from './ui/connect'
 import { ProviderNotice } from './ui/provider-notice'
@@ -51,6 +51,9 @@ function Shell() {
 
     return () => clearInterval(timer)
   }, [])
+
+  // The turns the runner is running show here as they happen.
+  useEffect(() => watchLive(), [])
 
   useEffect(() => {
     loadRooms()
