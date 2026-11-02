@@ -5,6 +5,7 @@ type IconName =
   | 'back'
   | 'bell'
   | 'bell-off'
+  | 'brain'
   | 'chevron-right'
   | 'download'
   | 'upload'
@@ -61,6 +62,7 @@ const PATHS: Record<IconName, string> = {
   folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   plug: 'M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4',
   sparkle: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
+  brain: 'M9.5 4a3 3 0 0 0-3 3 3 3 0 0 0-2.5 3 3 3 0 0 0 1 2.3A3 3 0 0 0 7 17.5 3 3 0 0 0 10 20.5V4.6M14.5 4a3 3 0 0 1 3 3 3 3 0 0 1 2.5 3 3 3 0 0 1-1 2.3A3 3 0 0 1 17 17.5 3 3 0 0 1 14 20.5V4.6',
   'bell-off': 'M8.7 3A6 6 0 0 1 18 8c0 2.4.5 4.1 1.1 5.2M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14M10.3 21a2 2 0 0 0 3.4 0M2 2l20 20',
   minimize: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
   expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
