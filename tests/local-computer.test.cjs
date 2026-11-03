@@ -35,6 +35,7 @@ async function fixture(t, spawnImpl = fakePowerShell) {
   const modulePath = require.resolve('../electron/local-computer.cjs')
   delete require.cache[modulePath]
   const bridge = require(modulePath)
+  bridge.setActionApprovalHandler(async () => true)
   const { port, token } = await bridge.startServer()
   t.after(() => { bridge.stopServer(); delete require.cache[modulePath] })
   const call = async (name, arguments_ = {}) => {
@@ -154,6 +155,7 @@ if (process.platform === 'win32') {
     const modulePath = require.resolve('../electron/local-computer.cjs')
     delete require.cache[modulePath]
     const bridge = require(modulePath)
+    bridge.setActionApprovalHandler(async () => true)
     const { port, token } = await bridge.startServer()
     t.after(() => { bridge.stopServer(); delete require.cache[modulePath] })
     bridge.setGranted(true)

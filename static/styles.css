@@ -409,6 +409,7 @@ input, textarea { font: inherit; color: inherit; }
 .md-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 .md-img { display: block; max-width: min(100%, 420px); max-height: 360px; margin: 6px 0; border-radius: 10px; cursor: zoom-in; object-fit: contain; background: #111; }
 .md-img-missing { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 8px; background: #1a1a1a; color: var(--muted); font-size: 12.5px; }
+.md-img-load { border: 1px solid #444; cursor: pointer; font: inherit; }
 .md-math-block { margin: 8px 0 10px; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 .md-math-block .katex-display { margin: 0; }
 .md-math-src { font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
