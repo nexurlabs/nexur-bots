@@ -1342,7 +1342,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   })
   if (settings.maximized) win.maximize()
@@ -1444,8 +1444,11 @@ function smokeCheck() {
   win.webContents.once('did-finish-load', () => {
     setTimeout(async () => {
       try {
-        const bridge = await win.webContents.executeJavaScript('typeof window.native')
-        if (bridge !== 'object') return fail(`preload bridge missing (${bridge})`)
+        const bridge = await win.webContents.executeJavaScript(`(async () => ({
+          platform: window.native && window.native.platform,
+          state: window.native && await window.native.computerGetState()
+        }))()`)
+        if (!bridge || bridge.platform !== process.platform || typeof bridge.state?.granted !== 'boolean') return fail('preload bridge or IPC unavailable')
         console.log('HERMES_BOTS_SMOKE_OK')
         app.exit(0)
       } catch (err) {
