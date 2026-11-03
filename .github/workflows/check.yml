@@ -27,15 +27,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      # Temporary on this draft branch: regenerate the lockfile for the Electron upgrade.
-      - run: bun install --ignore-scripts
-      - name: Export regenerated lockfile
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          echo NEXUR_LOCK_START
-          gzip -c bun.lock | base64 -w 120
-          echo NEXUR_LOCK_END
+      # bun.lock is the lockfile: fail if it is out of date instead of silently resolving new versions.
+      - run: bun install --frozen-lockfile --ignore-scripts
       - run: npm run check
       # The .cjs suites run on node (npm test); the .ts suites run on bun.
       # Glob instead of naming files, so a new test is never silently skipped.
