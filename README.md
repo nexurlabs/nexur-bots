@@ -38,7 +38,7 @@ NexurBots is made by NexurLabs. Up to version 1.8.5 it was called Hermes Bots.
 
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.3 or newer, installed first** (the oldest version this app is tested with). NexurBots is a front end for it: each bot is a Hermes profile, and the app connects to a Hermes you run on this computer, on a server, or over SSH. See [Step 0](#step-0-install-hermes-agent). NexurBots isn't affiliated with or endorsed by Nous Research.
 - An AI provider set up in Hermes (with Hermes's own onboarding: `/login` in chat, or `hermes model` / `hermes setup`).
-- To build and run from source: [Bun](https://bun.sh) 1.4 or newer (the scripts run on Bun) and Node.js; Electron is installed by `bun install`.
+- To build and run from source: [Bun](https://bun.sh) 1.4.2 or newer and Node.js 22.12 or newer; Electron is installed by `bun install`.
 - Computer control uses PowerShell and `user32.dll`, so it is Windows only. The rest can run from source on Linux and macOS; automated checks cover Windows and Linux.
 
 ## Quick install on Windows
@@ -96,7 +96,7 @@ Then open a new terminal and check `hermes --version` (v0.22.3 or newer). More o
 There's no packaged Linux or macOS build yet (releases are Windows installers only). Build and run from source instead:
 
 1. Install Hermes Agent (Step 0 above) and check `hermes --version`.
-2. Install [Bun](https://bun.sh) and Node.js 20+ (plus `git`).
+2. Install [Bun](https://bun.sh) 1.4.2+ and Node.js 22.12+ (plus `git`).
 3. Clone and start:
 
    ```sh

@@ -10,7 +10,7 @@ Thanks for helping. NexurBots is a desktop app that talks to [Hermes Agent](http
 
 ## Setup
 
-Install Node.js and Bun 1.4.2 or newer. The repository uses `bun.lock`; use the frozen install so dependencies match CI.
+Install Node.js 22.12 or newer and Bun 1.4.2 or newer. The repository uses `bun.lock`; use the frozen install so dependencies match CI.
 
 ```sh
 bun install --frozen-lockfile
