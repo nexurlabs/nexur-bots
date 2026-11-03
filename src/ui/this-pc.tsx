@@ -55,8 +55,8 @@ export function ThisPcTab({ profile = 'default' }: { profile?: string }) {
     setLink('checking')
     void native
       .computerCheck(profile)
-      .then(result => mounted.current && setLink({ ok: result.ok, tools: result.tools.length, error: result.error, asks: result.asks !== false }))
-      .catch(error => mounted.current && setLink({ ok: false, tools: 0, error: String(error?.message || error), asks: true }))
+      .then(result => mounted.current && setLink({ ok: result.ok, tools: result.tools.length, error: result.error, asks: result.asks === true }))
+      .catch(error => mounted.current && setLink({ ok: false, tools: 0, error: String(error?.message || error), asks: false }))
   }
 
   useEffect(checkLink, [profile])
@@ -190,13 +190,13 @@ export function ThisPcTab({ profile = 'default' }: { profile?: string }) {
       ) : null}
 
       <p className="this-pc-note">
-        Looking at the screen runs straight away. A bot asks in the chat before each click, keystroke or other action.
+        Looking at the screen runs straight away. NexurBots asks on this PC before each click, keystroke or other action. Hermes may also ask in the chat.
       </p>
 
       {link !== 'checking' && link.ok && !link.asks ? (
         <div className="link-check" data-bad>
           <i />
-          <span>Hermes couldn't be set to ask first, so bots can act on this PC without asking while control is on.</span>
+          <span>Hermes couldn't be set to ask in chat. NexurBots will still ask on this PC before each action.</span>
           <button className="link-btn" onClick={checkLink} type="button">
             Retry
           </button>

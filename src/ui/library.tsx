@@ -36,6 +36,9 @@ interface Pic {
 }
 
 const IMAGE_URL = /\.(png|jpe?g|gif|webp|svg)(\?|$)/i
+const imageHost = (src: string) => {
+  try { return new URL(src).host || 'external site' } catch { return 'external site' }
+}
 
 const day = (at: number) => new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' })
 
@@ -143,7 +146,12 @@ export function Library({ messages, scope }: { messages: ChatMsg[]; scope: strin
           {filter === 'all' ? <b>Images</b> : null}
           <div className="lib-grid">
             {pics.map(pic =>
-              pic.src ? (
+              pic.src && /^https?:/i.test(pic.src) ? (
+                <button className="lib-ghost" key={pic.key} onClick={() => void openImage(pic, undefined, pic.src)} title={`Load image from ${imageHost(pic.src)}`} type="button">
+                  <Icon name="image" size={20} />
+                  <small>Load external image from {imageHost(pic.src)}</small>
+                </button>
+              ) : pic.src ? (
                 <button
                   key={pic.key}
                   onClick={() => void openImage(pic, pic.local, pic.src)}

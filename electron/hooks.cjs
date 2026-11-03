@@ -112,6 +112,10 @@ function init({ app, ipcMain, BrowserWindow, seal, unseal }) {
       const event = String(req.headers['x-github-event'] || req.headers['x-event-type'] || 'webhook')
 
       const secret = hook.secret ? unseal(hook.secret) : ''
+      // A configured secret that cannot be decrypted is not an unsigned hook.
+      // Stop the event and tell the operator to restore the secret instead of
+      // silently accepting a request without its signature.
+      if (hook.secret && !secret) return reply(res, 503, { error: 'webhook secret unavailable; set it again' })
       if (secret) {
         const given = String(req.headers['x-hub-signature-256'] || '')
         const want = 'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('hex')
@@ -211,6 +215,7 @@ function init({ app, ipcMain, BrowserWindow, seal, unseal }) {
     const headers = { 'Content-Type': 'application/json', 'Content-Length': raw.length, 'X-Event-Type': 'test' }
     if (hook.kind === 'github') headers['X-GitHub-Event'] = String(event || 'ping')
     const secret = hook.secret ? unseal(hook.secret) : ''
+    if (hook.secret && !secret) return { code: 503, error: 'webhook secret unavailable; set it again' }
     if (secret) headers['X-Hub-Signature-256'] = 'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('hex')
     return new Promise((resolve, reject) => {
       const req = http.request({ host: '127.0.0.1', port: state.port, method: 'POST', path: `/hooks/${token}`, headers }, res => {

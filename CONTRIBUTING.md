@@ -10,15 +10,18 @@ Thanks for helping. NexurBots is a desktop app that talks to [Hermes Agent](http
 
 ## Setup
 
+Install Node.js and Bun 1.4.2 or newer. The repository uses `bun.lock`; use the frozen install so dependencies match CI.
+
 ```sh
-npm install
+bun install --frozen-lockfile
 npm run check   # syntax checks for the Electron files
-npm test        # Node tests
-npx --yes bun@1.4.2 test --isolate ./tests/*.test.ts   # Bun tests (run as CI does)
-npm run build   # bundles the app into ./app
+npm test        # Node tests plus the selected Bun suites
+bun test --isolate ./tests/*.test.ts   # all TypeScript tests, as in CI
+bunx tsc --noEmit -p .
+bun run build   # bundles the app into ./app
 ```
 
-Run the app with `npm start`. Preview the interface without Hermes by opening `app/renderer/index.html` with `#chat`, `#room` or `#connect` on the end of the address.
+Run the app with `bun run start`. Preview the interface without Hermes by opening `app/renderer/index.html` with `#chat`, `#room` or `#connect` on the end of the address.
 
 ## Pull requests
 

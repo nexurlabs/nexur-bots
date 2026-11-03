@@ -1,18 +1,16 @@
 # NexurBots
 
-A desktop app for talking to a team of bots. Each bot is a [Hermes Agent](https://github.com/NousResearch/hermes-agent) **profile**, so it keeps its own model, tools, skills, memory and history. Chat with one bot, or put several in a group and let them work together.
+**Give your AI agents a team chat.** NexurBots is a desktop app for [Hermes Agent](https://github.com/NousResearch/hermes-agent): create bots with different roles and models, chat with one, or bring several together to work on a task. Each bot uses a Hermes profile with its own tools, skills, memory and history.
 
 Hermes does the thinking. This app is the front end: roster, chats, groups, per-bot settings, attachments and an optional "control this PC" mode.
 
 NexurBots is made by NexurLabs. Up to version 1.8.5 it was called Hermes Bots.
 
-![A 1:1 chat with Nova, the team's Lead bot, next to its settings: model, approvals, routines and secrets](docs/screenshots/chat.png)
+**Get started:** [Download the Windows installer](https://github.com/nexurlabs/nexur-bots/releases/latest) or see [Quick install](#quick-install-on-windows). The installer is currently unsigned, so Windows may show a SmartScreen warning. Hermes and a configured AI provider are required; provider usage may have its own charges. Linux and macOS run from source.
 
 ![A group chat where four bots split up a product launch, with the members list on the right](docs/screenshots/group.png)
 
-![A bot asking before it right-clicks on your PC, with Deny, Allow for this chat and Allow once](docs/screenshots/approvals.png)
-
-*Screenshots use the app's built-in preview data (see [Preview without Hermes](#preview-without-hermes)).*
+*Screenshot uses the app's built-in preview data. See the [1:1 chat](docs/screenshots/chat.png) and [approval card](docs/screenshots/approvals.png) too.*
 
 ## What you get
 
@@ -41,7 +39,7 @@ NexurBots is made by NexurLabs. Up to version 1.8.5 it was called Hermes Bots.
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.3 or newer, installed first** (the oldest version this app is tested with). NexurBots is a front end for it: each bot is a Hermes profile, and the app connects to a Hermes you run on this computer, on a server, or over SSH. See [Step 0](#step-0-install-hermes-agent). NexurBots isn't affiliated with or endorsed by Nous Research.
 - An AI provider set up in Hermes (with Hermes's own onboarding: `/login` in chat, or `hermes model` / `hermes setup`).
 - To build and run from source: [Bun](https://bun.sh) 1.4 or newer (the scripts run on Bun) and Node.js; Electron is installed by `bun install`.
-- Computer control uses PowerShell and `user32.dll`, so it is Windows only. Everything else is cross-platform.
+- Computer control uses PowerShell and `user32.dll`, so it is Windows only. The rest can run from source on Linux and macOS; automated checks cover Windows and Linux.
 
 ## Quick install on Windows
 
@@ -139,7 +137,7 @@ On first launch pick one:
 | **Remote server** | You have a Hermes server address and its session token. |
 | **Over SSH** | Hermes runs on a VM. Give the host, user and (optionally) a key file; the app starts Hermes there and tunnels to it with your system `ssh`. |
 
-Connections are remembered in the app's `settings.json` (Electron's user-data folder). Session tokens are encrypted with your operating system's secure storage when it's available; key file paths are stored as plain text. Nothing is sent anywhere except the Hermes you chose.
+Connections are remembered in the app's `settings.json` (Electron's user-data folder). Session tokens are encrypted with your operating system's secure storage when it's available; otherwise they are base64-encoded, which is not encryption. Key file paths are stored as plain text. Hermes may send your requests and attachments to the providers and tools you configure; external images in replies load only when you choose to load them.
 
 ## How it maps onto Hermes
 
@@ -217,10 +215,10 @@ Each bot can have a small private desktop (TigerVNC + Xfce) on the Hermes machin
 The **This PC** view lets a bot work on your own Windows machine.
 
 - It is **off every time the app starts**. Nothing runs, not even a screenshot, until you switch it on.
-- Press **Ctrl+Alt+Esc** from anywhere to cut access immediately.
+- Press **Ctrl+Alt+Esc** from anywhere to stop new actions. If the shortcut is unavailable, control cannot be enabled until it is free. Stop also attempts to terminate a running terminal and its child processes; programs that detached or already finished may continue.
 - The app runs a small MCP server on a loopback port, forwards it to your Hermes over the same tunnel, and registers it as `hermes-bots-this-pc` on each bot's profile. You can switch it off per bot under **Settings → Connected apps**.
 - Screenshots come from Electron's `desktopCapturer`; mouse and keyboard use a PowerShell helper that calls `SendInput`.
-- With control on, a bot still asks in the chat before each action that uses your mouse, keyboard, or terminal (move, click, drag, scroll, type, keys, a command). Looking at the screen doesn't ask. See [Approvals](#approvals).
+- With control on, NexurBots asks on this PC before each mouse, keyboard or terminal action (move, click, drag, scroll, type, keys, a command). Hermes may also ask in the chat. Looking at the screen doesn't ask. See [Approvals](#approvals).
 - The preview shows the last screenshot a bot took. Hover it (or click anywhere on it) for **Open**, which shows it large, the same way as the bot's computer; minimize it with the corner button or a plain **Esc** tap (there's nothing to send keys to, so no hold is needed). It's a picture of your own screen, not a stream, so there is no control to hand over: Allow / Stop, the approvals and Ctrl+Alt+Esc work exactly as before, and turning control off closes the large view.
 
 Only enable this for bots and models you trust, and read their approval settings first.
@@ -238,13 +236,13 @@ When Hermes stops a bot before something risky, the chat shows a card instead of
 
 Whether a bot asks at all is its **Approvals** setting (ask me / smart / never ask), which is Hermes's `approvals.mode`. How long Hermes waits is `approvals.timeout` in the bot's Hermes config (5 minutes by default).
 
-**This PC** actions ask too. Hermes only stops MCP tool calls on a server marked `trust: untrusted`, so each time the app registers `hermes-bots-this-pc` on a bot's profile it also sets `mcp_servers.hermes-bots-this-pc.trust: untrusted` in that profile's config (`PUT /api/config`, which merges in that one key and leaves everything else alone). The PC server marks `computer_screenshot` read-only, so Hermes lets it run straight away. Every other This PC tool asks first.
+**This PC** actions have a separate local confirmation in NexurBots for every action except screenshots. This confirmation remains required even if Hermes's approval setting is off or its MCP trust setting fails. Hermes can also ask in chat: the app registers `hermes-bots-this-pc` as `trust: untrusted`, but a chat already using an older tool list may not see that setting until its next reload.
 
 - The card names the action and where, from the tool call the bot just made: "Click at (812, 604)", "Type "Q3.docx"", "Press ctrl+c".
-- **Allow for this chat** covers only that kind of action (clicks, typing, key presses, …) in that chat. There's no **Always allow**, since Hermes doesn't keep a grant for these.
+- **Allow for this chat** covers only Hermes's chat approval for that kind of action. The separate local confirmation still asks for each action. There's no **Always allow**, since Hermes doesn't keep a grant for these.
 - No answer before Hermes's `approvals.timeout` means no: the card expires and the action doesn't run.
 - While **Allow control** is off, the app answers no straight away without showing a card. The record reads "Denied (control is off): …". Switching control off, or pressing Ctrl+Alt+Esc, denies any card that's still waiting and forgets that chat's **Allow for this chat** choices for This PC.
-- The This PC tab warns you if Hermes couldn't be set to ask first. Bots can then act without asking while control is on.
+- The This PC tab warns you if Hermes couldn't be set to ask in chat. The local confirmation still applies.
 
 For any other MCP server marked untrusted, every call asks, and **Allow for this chat** stops asking for that server in that chat. The app remembers this, since Hermes doesn't keep a grant for these.
 
@@ -433,7 +431,7 @@ Share a bot's setup as a file, and make new bots from one.
 
 A routine can run when something happens, not just on a timer. In New/Edit routine, set **When** to **Event**.
 
-- **GitHub:** pick the events (PR opened, PR merged, push, issue opened, or any). Optionally add a webhook secret; the app checks GitHub's `X-Hub-Signature-256` with it. The secret is encrypted on this computer (Electron safeStorage) and never shown in chat.
+- **GitHub:** pick the events (PR opened, PR merged, push, issue opened, or any). Optionally add a webhook secret; the app checks GitHub's `X-Hub-Signature-256` with it. The secret is encrypted with Electron safeStorage when available and never shown in chat; without secure storage it is base64-encoded rather than encrypted. If a stored secret cannot be decrypted, events are rejected until it is set again.
 - **Webhook:** any POST runs the routine.
 - **Email:** coming soon. Hermes reads email as a chat platform, but nothing can start a routine from an email yet.
 - **When it fires:** the request body is added to the routine's prompt for that run (pretty-printed if it's JSON, cut at 4,000 characters). The result arrives in your 1:1 chat with the bot, like a timed routine.
@@ -498,7 +496,7 @@ Ask a bot "call yourself Atlas from now on" or "set your label to Research", and
 
 ## Rich replies
 
-Bot replies render GitHub-style Markdown: headings, lists and task lists, tables that scroll sideways, quotes, and code blocks with syntax highlighting, a language label and a Copy button. Math in `$$ ... $$`, `\[ ... \]` or `\( ... \)` renders with KaTeX, which loads only the first time a reply contains math. Links open in your browser and never replace the app window; raw HTML in a reply is shown as text, not run. Pictures a bot links by their path on the Hermes machine are shown inline. Replies that are still streaming render without flicker, even with an unclosed code block or half a table.
+Bot replies render GitHub-style Markdown: headings, lists and task lists, tables that scroll sideways, quotes, and code blocks with syntax highlighting, a language label and a Copy button. Math in `$$ ... $$`, `\[ ... \]` or `\( ... \)` renders with KaTeX, which loads only the first time a reply contains math. Links open in your browser and never replace the app window; raw HTML in a reply is shown as text, not run. Pictures a bot links by their path on the Hermes machine are shown inline. External image URLs show a button with the host and load only when you click it. Replies that are still streaming render without flicker, even with an unclosed code block or half a table.
 
 Preview: `#chat-markdown` (every element) and `#chat-mdstream` (a reply still arriving).
 
@@ -522,7 +520,7 @@ build.ts             Bun build script → ./app (the packaged app folder)
 - Files you send are kept on the device you sent them from so the Library can preview and re-save them. Chat history that came from another device shows those files by name only.
 - A group's message history is stored on the device you chatted from, so a second computer sees the group but not its earlier messages.
 - Computer control is Windows only and has had limited testing. Treat it as experimental.
-- This PC approvals rely on Hermes's MCP `trust` setting and its config API. The app re-adds the server, then sets `trust`, so a chat that reloads its tools in that split second keeps the old no-ask setting until its next tool reload. Only the This PC tab's warning shows when setting `trust` failed. The card can show where a click lands only when Hermes sends the tool call's arguments (it does when tool progress is on). Otherwise it names the action alone.
+- Hermes's chat approvals for This PC depend on its MCP `trust` setting and may require a tool reload. NexurBots also requires a separate local confirmation for every action except screenshots, even if Hermes's chat approval is unavailable.
 - **Edit** and **Run now** use Hermes's dashboard API (`/api/cron/jobs…`), like the rest of the app's REST calls. A Hermes without it can still list, add, pause and delete routines, but not edit them.
 - **Run now** waits for the routine to finish, since Hermes runs it before answering. After 15 minutes the app stops waiting, but the routine keeps running on Hermes.
 - Memory editing doesn't take Hermes's file lock, and follows the launch profile's tool backend (see [Memory](#memory)).
@@ -546,7 +544,7 @@ Windows releases of NexurBots are signed once the project's SignPath Foundation 
   - **Reviewers** (review every pull request from anyone else before it is merged): [@nexurlabs](https://github.com/nexurlabs) and [@rishabhiskawai](https://github.com/rishabhiskawai).
   - **Approvers** (approve each signing request in SignPath before a release is signed): [@nexurlabs](https://github.com/nexurlabs).
 - **Build:** releases are built from the public source by the GitHub Actions workflow in this repository. Only tagged commits on `main` are released.
-- **Privacy:** this program does not transfer any information to other networked systems unless the user or the person installing or operating it requests that. NexurBots connects only to Hermes instances the user configures.
+- **Privacy:** NexurBots connects to the Hermes instances you configure. Hermes may send prompts, attachments, screen images and other data to your selected providers and tools. Links open in your browser, and external images in replies contact their hosts only after you choose to load them. Event routines can also receive requests when enabled.
 
 Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
 

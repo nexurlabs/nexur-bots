@@ -123,31 +123,47 @@ function hermesPath(src: string): null | string {
 
 function Picture({ src, alt, title }: { src: string; alt: string; title?: null | string }) {
   const path = hermesPath(src)
-  const direct = !path && (/^https?:\/\//i.test(src) || /^data:image\/(png|jpe?g|gif|webp|bmp|svg\+xml)[;,]/i.test(src)) ? src : null
-  const [loaded, setLoaded] = useState<null | string>(direct)
-  const [failed, setFailed] = useState(!direct && !path)
+  const remote = !path && /^https?:\/\//i.test(src) ? src : null
+  const inline = !path && /^data:image\/(png|jpe?g|gif|webp|bmp|svg\+xml)[;,]/i.test(src) ? src : null
+  const [loaded, setLoaded] = useState<null | { source: string; url: string }>(inline ? { source: src, url: inline } : null)
+  const [failed, setFailed] = useState<null | string>(null)
+  // Never reuse consent or a fetched URL if a streaming message changes src.
+  const shown = loaded?.source === src ? loaded.url : inline
 
   useEffect(() => {
+    setLoaded(inline ? { source: src, url: inline } : null)
+    setFailed(null)
     if (!path) {
       return
     }
 
     let live = true
     readHermesImage(path)
-      .then(url => live && setLoaded(url))
-      .catch(() => live && setFailed(true))
+      .then(url => live && setLoaded({ source: src, url }))
+      .catch(() => live && setFailed(src))
 
     return () => {
       live = false
     }
-  }, [path])
+  }, [inline, path, src])
 
-  if (failed || !loaded) {
+  if (remote && !shown && failed !== src) {
+    let host = 'external site'
+    try { host = new URL(remote).host || host } catch {}
+    return (
+      <button className="md-img-missing md-img-load" onClick={() => setLoaded({ source: src, url: remote })} title={`Load an image from ${host}`} type="button">
+        <Icon name="image" size={13} />
+        Load image from {host}
+      </button>
+    )
+  }
+
+  if (failed === src || !shown) {
     return (
       <span className="md-img-missing" title={src}>
         <Icon name="image" size={13} />
         {alt || src.split(/[\\/]/).pop() || 'picture'}
-        {!failed ? <span className="spinner xs" /> : null}
+        {path && failed !== src ? <span className="spinner xs" /> : null}
       </span>
     )
   }
@@ -156,10 +172,10 @@ function Picture({ src, alt, title }: { src: string; alt: string; title?: null |
     <img
       alt={alt}
       className="md-img"
-      onClick={() => $lightbox.set({ name: alt || src.split(/[\\/?#]/).filter(Boolean).pop() || 'Picture', src: loaded })}
-      onError={() => setFailed(true)}
+      onClick={() => $lightbox.set({ name: alt || src.split(/[\\/?#]/).filter(Boolean).pop() || 'Picture', src: shown })}
+      onError={() => setFailed(src)}
       referrerPolicy="no-referrer"
-      src={loaded}
+      src={shown}
       title={title || alt || undefined}
     />
   )

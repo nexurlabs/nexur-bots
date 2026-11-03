@@ -17,6 +17,7 @@ const { checkKeyFile, explainKeyError } = require('./ssh-key.cjs')
 const { registrationsFor } = require('./tool-routes.cjs')
 const { adoptOldDataFolder, OLD_NAME } = require('./app-data.cjs')
 const tokenStore = require('./token-store.cjs')
+const { setPanicShortcut } = require('./panic-shortcut.cjs')
 const { ensureGateway } = require('./gateway-ensure.cjs')
 const { tokenCopyDirFor } = require('./token-dir.cjs')
 
@@ -906,11 +907,11 @@ async function checkThisPc(who) {
     const tools = Array.isArray(body.tools) ? body.tools.map(tool => String(tool.name || tool)) : []
     const error = body.ok ? '' : String(body.error || body.detail || `Hermes answered ${res.status}`)
     dbg('this-pc mcp test', profile || 'default', ':', body.ok ? `ok, ${tools.length} tools` : `FAILED ${error.slice(0, 300)}`)
-    return { ok: !!body.ok, tools, error, asks: thisPcAsks.get(asked || 'default') !== false }
+    return { ok: !!body.ok, tools, error, asks: thisPcAsks.get(asked || 'default') === true }
   } catch (error) {
     const message = String((error && error.message) || error)
     dbg('this-pc mcp test', profile || 'default', ': FAILED', message)
-    return { ok: false, tools: [], error: message, asks: thisPcAsks.get(asked || 'default') !== false }
+    return { ok: false, tools: [], error: message, asks: thisPcAsks.get(asked || 'default') === true }
   }
 }
 
@@ -1083,22 +1084,34 @@ ipcMain.on('apptool:result', (_event, answer) => {
 })
 
 function updatePanicShortcut(active) {
-  try {
-    globalShortcut.unregister('Control+Alt+Escape')
-  } catch {}
-  if (!active) return
-  try {
-    globalShortcut.register('Control+Alt+Escape', () => {
-      localComputer.setGranted(false)
-      dbg('panic stop: Ctrl+Alt+Esc pressed, control revoked')
-    })
-  } catch (error) {
-    dbg('could not register panic hotkey:', String(error && error.message))
-  }
+  return setPanicShortcut(globalShortcut, active, () => {
+    localComputer.setGranted(false)
+    dbg('panic stop: Ctrl+Alt+Esc pressed, control revoked')
+  }, dbg)
 }
 
+// Hermes may also ask in chat. This second, local confirmation is the safety
+// boundary if Hermes' trust setting is missing, stale or set to never ask.
+localComputer.setActionApprovalHandler(async ({ name, args }) => {
+  if (!win || win.isDestroyed()) return false
+  const details = JSON.stringify(args, null, 2)
+  // Never hide part of a command behind a truncated approval prompt.
+  if (details.length > 8000) return false
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: 'Approve PC action',
+    message: 'A bot wants to use this PC',
+    detail: `${name}\n\n${details}`,
+    buttons: ['Deny', 'Allow once'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  })
+  return response === 1
+})
+
 localComputer.setOnGrantChange(value => {
-  updatePanicShortcut(value)
+  if (!value) updatePanicShortcut(false)
   try {
     if (win && !win.isDestroyed()) win.webContents.send('computer:granted-changed', value)
   } catch {}
@@ -1112,6 +1125,9 @@ ipcMain.handle('computer:check', (_e, profile) => checkThisPc(typeof profile ===
 // The conversation-identity barrier, called by the renderer just before a bot's first real turn.
 ipcMain.handle('groups:ensureIdentity', (_e, who) => ensureGroupsIdentity(typeof who === 'string' ? who : 'default'))
 ipcMain.handle('computer:setGranted', (_e, value) => {
+  if (value && !localComputer.isGranted() && !updatePanicShortcut(true)) {
+    return { ...localComputer.getState(), lastError: 'Cannot turn on PC control: Ctrl+Alt+Esc is unavailable. Close the app using that shortcut and try again.' }
+  }
   localComputer.setGranted(!!value)
   return localComputer.getState()
 })

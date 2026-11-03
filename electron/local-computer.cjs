@@ -36,6 +36,12 @@ const TOOL_PREFIX = 'computer_'
 
 // ── state ───────────────────────────────────────────────────────────────────
 let granted = false
+// A control lease changes on every toggle. A confirmation from an older lease
+// must never authorize an action after Stop, even if control is enabled again.
+let controlEpoch = 0
+let approveAction = null
+let approvalQueue = Promise.resolve()
+const runningShells = new Set()
 let server = null
 let port = 0
 let token = ''
@@ -425,12 +431,38 @@ const DENIED = {
   isError: true
 }
 
+const NOT_APPROVED = {
+  content: [{ type: 'text', text: 'This PC action was not approved in NexurBots.' }],
+  isError: true
+}
+
+// This local confirmation is independent of Hermes' MCP trust setting. Only one
+// prompt is shown at a time, and queued prompts are discarded when control stops.
+async function confirmAction(name, args, epoch) {
+  const pending = approvalQueue.then(async () => {
+    if (!granted || epoch !== controlEpoch || !approveAction) return false
+    try {
+      return (await approveAction({ name, args })) === true
+    } catch (error) {
+      log('local action confirmation failed:', String(error && error.message))
+      return false
+    }
+  })
+  approvalQueue = pending.then(() => undefined, () => undefined)
+  const approved = await pending
+  return approved && granted && epoch === controlEpoch
+}
+
 async function callTool(name, args) {
   if (!granted) return DENIED
   const op = name.slice(TOOL_PREFIX.length)
+  if (!TOOLS.some(tool => tool.name === name)) return { content: [{ type: 'text', text: `Unknown tool ${name}` }], isError: true }
+  const epoch = controlEpoch
+  if (!READ_ONLY.has(op) && !(await confirmAction(name, args, epoch))) return NOT_APPROVED
   try {
     if (op === 'screenshot') {
       const shot = await captureShot()
+      if (!granted || epoch !== controlEpoch) return DENIED
       if (!shot.ok) return { content: [{ type: 'text', text: shot.error }], isError: true }
       lastShot = { dataUrl: `data:image/jpeg;base64,${shot.base64}`, at: Date.now() }
       return {
@@ -460,6 +492,7 @@ async function callTool(name, args) {
       const real = toReal(args.x, args.y)
       const result = await psCommand('move', real)
       if (!result.ok) return psResultToContent(result)
+      if (!granted || epoch !== controlEpoch) return DENIED
       const scrolled = await psCommand('scroll', { direction: args.direction, amount: args.amount || 3 })
       return psResultToContent(scrolled)
     }
@@ -491,14 +524,33 @@ async function callTool(name, args) {
   return { content: [{ type: 'text', text: `Unknown tool ${name}` }], isError: true }
 }
 
+function stopShell(child) {
+  const fallback = () => {
+    try { child.kill() } catch (error) { log('could not stop terminal:', String(error && error.message)) }
+  }
+  // On Windows, terminate descendants too. If taskkill cannot run, still stop
+  // PowerShell itself. Detached processes may need to be stopped separately.
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      killer.on('error', fallback)
+      killer.on('exit', code => { if (code !== 0) fallback() })
+      return
+    } catch {}
+  }
+  fallback()
+}
+
 function runShell(command, cwd, timeoutMs) {
   return new Promise(resolve => {
     let settled = false
     let timer
+    let cancel
     const finish = result => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      runningShells.delete(cancel)
       resolve(result)
     }
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
@@ -506,6 +558,11 @@ function runShell(command, cwd, timeoutMs) {
       ...(cwd ? { cwd } : {}),
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    cancel = () => {
+      finish({ ok: false, code: null, stdout, stderr, error: 'Stopped when PC control was turned off' })
+      stopShell(child)
+    }
+    runningShells.add(cancel)
     let stdout = ''
     let stderr = ''
     const take = (buf, chunk) => {
@@ -515,8 +572,8 @@ function runShell(command, cwd, timeoutMs) {
     child.stdout.on('data', chunk => { stdout = take(stdout, chunk) })
     child.stderr.on('data', chunk => { stderr = take(stderr, chunk) })
     timer = setTimeout(() => {
-      child.kill()
       finish({ ok: false, code: null, stdout, stderr, error: 'Timed out' })
+      stopShell(child)
     }, timeoutMs)
     child.on('error', error => {
       finish({ ok: false, code: null, stdout, stderr, error: 'Could not start PowerShell: ' + String(error && error.message) })
@@ -974,7 +1031,11 @@ function stopServer() {
 
 function setGranted(value) {
   granted = !!value
-  if (!granted) stopPs()
+  controlEpoch++
+  if (!granted) {
+    stopPs()
+    for (const cancel of [...runningShells]) cancel()
+  }
   try {
     onGrantChange(granted)
   } catch {}
@@ -996,9 +1057,13 @@ function setOnGrantChange(fn) {
   onGrantChange = fn || (() => {})
 }
 
+function setActionApprovalHandler(fn) {
+  approveAction = typeof fn === 'function' ? fn : null
+}
+
 /** Test seam only: swap the real screen capture for a fake one. Pass no fn to restore. */
 function setCapture(fn) {
   captureShot = typeof fn === 'function' ? fn : captureScreenshot
 }
 
-module.exports = { startServer, stopServer, setGranted, isGranted, getState, getLastShot, setOnGrantChange, setAppToolHandler, groupToken, appToken, APP_TOOLS, setCapture, TOOLS, TOOLS_REVISION, SERVER_NAME: 'hermes-bots-this-pc' }
+module.exports = { startServer, stopServer, setGranted, isGranted, getState, getLastShot, setOnGrantChange, setActionApprovalHandler, setAppToolHandler, groupToken, appToken, APP_TOOLS, setCapture, TOOLS, TOOLS_REVISION, SERVER_NAME: 'hermes-bots-this-pc' }
